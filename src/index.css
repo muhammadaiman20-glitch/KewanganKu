@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-bg-dark: #0a0f1d;
+    --color-surface-dark: #0f172a;
+    --color-surface-card: #141e33;
+    --color-surface-border: #1e293b;
+    --color-emerald-primary: #10b981;
+    --color-emerald-dark: #059669;
+    --color-emerald-glow: rgba(16, 185, 129, 0.2);
+    --color-gold-accent: #f59e0b;
+    --color-gold-glow: rgba(245, 158, 11, 0.2);
+  }
+
+  body {
+    background-color: #080d1a;
+    color: #f1f5f9;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom Scrollbar for smooth Android/Material 3 feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}
+
+/* Scanning laser animation for OCR */
+@keyframes laserSweep {
+  0% {
+    top: 0%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 96%;
+    opacity: 1;
+  }
+  100% {
+    top: 0%;
+    opacity: 0.8;
+  }
+}
+
+.animate-laser {
+  animation: laserSweep 2.2s ease-in-out infinite;
+}
+
+/* Pulse glow effects */
+.glow-emerald {
+  box-shadow: 0 0 25px -4px rgba(16, 185, 129, 0.25);
+}
+
+.glow-gold {
+  box-shadow: 0 0 25px -4px rgba(245, 158, 11, 0.3);
+}
+
+.glow-navy {
+  box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.6);
+}

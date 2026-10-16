@@ -1,0 +1,6 @@
+{
+  "name": "KewanganKu - Pengurus Kewangan & Kenderaan",
+  "description": "Aplikasi pengurusan kewangan peribadi lengkap: Pengurusan Hutang, Langganan, Kenderaan & Log Minyak dengan Imbasan Resit Pintar AI Gemini OCR.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
