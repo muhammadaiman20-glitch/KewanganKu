@@ -15,6 +15,7 @@ import {
 import { VoiceInput } from './components/VoiceInput';
 import { ExpenseHistory } from './components/ExpenseHistory';
 import { Navbar } from './components/Navbar';
+import { RecurringBillsScreen } from './components/RecurringBillsScreen';
 import { BottomNavigation } from './components/BottomNavigation';
 import { DashboardScreen } from './components/DashboardScreen';
 import { DebtScreen } from './components/DebtScreen';
@@ -412,7 +413,7 @@ export default function App() {
       />
 
       {/* Main Content Area with Smooth Page Slide Transitions */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 pt-5 pb-16 overflow-x-hidden">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 pt-5 pb-[calc(var(--navigation-height)+var(--navigation-inset)+24px)] overflow-x-hidden">
         <VoiceInput vehicles={data.vehicles} screen={currentTab}
           onSaveFuel={handleAddFuelLog}
           onSaveExpense={(expense) => {
@@ -438,6 +439,16 @@ export default function App() {
                 onOpenOcrWithModule={handleOpenOcrWithModule}
               />
             )}
+
+            {currentTab === 'bills' && <RecurringBillsScreen
+              bills={data.bills}
+              onAddBill={bill => setData(prev => ({ ...prev, bills: [{ ...bill, id: crypto.randomUUID(), paymentHistory: [], createdAt: new Date().toISOString().split('T')[0] }, ...prev.bills] }))}
+              onUpdateBill={bill => setData(prev => ({ ...prev, bills: prev.bills.map(item => item.id === bill.id ? bill : item) }))}
+              onDeleteBill={id => setData(prev => ({ ...prev, bills: prev.bills.filter(item => item.id !== id) }))}
+              onRecordPayment={(id, record) => setData(prev => ({ ...prev, bills: prev.bills.map(bill => bill.id === id ? { ...bill, status: 'paid', paymentHistory: [{ ...record, id: crypto.randomUUID(), billId: id }, ...bill.paymentHistory] } : bill) }))}
+              onOpenOcrWithModule={handleOpenOcrWithModule}
+              onNavigate={handleTabChange}
+            />}
 
             {currentTab === 'debt' && (
               <DebtScreen
@@ -545,6 +556,7 @@ export default function App() {
       <BottomNavigation
         currentTab={currentTab}
         onChangeTab={handleTabChange}
+        billBadge={data.bills.filter(bill => bill.status !== 'paid').length}
         debtBadge={urgentDebtsCount}
         subBadge={urgentSubsCount}
         vehicleBadge={urgentVehicleAlerts}

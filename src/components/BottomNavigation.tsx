@@ -1,17 +1,9 @@
-import React from 'react';
-import {
-  LayoutDashboard,
-  CreditCard,
-  Repeat,
-  Car,
-  Fuel,
-  ScanLine,
-  Settings,
-  BarChart3,
-  Zap,
-} from 'lucide-react';
-import { motion } from 'framer-motion';
-import { TabType } from '../types';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Grid2X2, X } from 'lucide-react';
+import type { TabType } from '../types';
+import { NavigationBadge, NavigationItem } from './navigation/NavigationItem';
+import { NAVIGATION_DESTINATIONS, NAVIGATION_GROUPS, PRIMARY_DESTINATIONS, SECONDARY_DESTINATIONS, type NavigationBadgeKey } from './navigation/navigationConfig';
+import './navigation/navigation.css';
 
 interface BottomNavProps {
   currentTab: TabType;
@@ -22,215 +14,48 @@ interface BottomNavProps {
   vehicleBadge?: number;
 }
 
-export const BottomNavigation: React.FC<BottomNavProps> = ({
-  currentTab,
-  onChangeTab,
-  debtBadge = 0,
-  billBadge = 0,
-  subBadge = 0,
-  vehicleBadge = 0,
-}) => {
-  return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0a0f1d]/95 backdrop-blur-lg border-t border-slate-800/80 px-1.5 py-1.5 shadow-2xl safe-area-pb">
-      <div className="max-w-2xl mx-auto flex items-center justify-between relative overflow-x-auto scrollbar-none gap-0.5 sm:gap-1">
-        {/* 1. Dashboard */}
-        <button
-          onClick={() => onChangeTab('dashboard')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'dashboard' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'dashboard' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Utama</span>
-        </button>
-
-        {/* 2. Bil Utiliti (NEW MODUL RECURRING BILLS) */}
-        <button
-          onClick={() => onChangeTab('bills')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'bills' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'bills' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Zap className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          {billBadge > 0 && (
-            <span className="absolute top-0 right-1.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-amber-500 text-slate-950 text-[8px] sm:text-[9px] font-black rounded-full flex items-center justify-center z-20 ring-2 ring-[#0a0f1d]">
-              {billBadge}
-            </span>
-          )}
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Bil</span>
-        </button>
-
-        {/* 3. Hutang */}
-        <button
-          onClick={() => onChangeTab('debt')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'debt' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'debt' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <CreditCard className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          {debtBadge > 0 && (
-            <span className="absolute top-0 right-1.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-rose-500 text-white text-[8px] sm:text-[9px] font-black rounded-full flex items-center justify-center z-20 ring-2 ring-[#0a0f1d]">
-              {debtBadge}
-            </span>
-          )}
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Hutang</span>
-        </button>
-
-        {/* 4. Center AI OCR Floating Action Button */}
-        <div className="flex-1 min-w-[50px] sm:min-w-[56px] flex flex-col items-center justify-center -mt-4">
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            whileHover={{ scale: 1.05 }}
-            onClick={() => onChangeTab('ocr')}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center shadow-lg transition-all ${
-              currentTab === 'ocr'
-                ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-slate-950 ring-4 ring-emerald-500/30'
-                : 'bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 ring-4 ring-emerald-950/60'
-            }`}
-            title="Imbas Resit Pintar AI"
-          >
-            <ScanLine className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.4]" />
-          </motion.button>
-          <span className="text-[9px] font-extrabold text-amber-400 mt-0.5 tracking-tight">Imbas</span>
-        </div>
-
-        {/* 5. Langganan */}
-        <button
-          onClick={() => onChangeTab('subscription')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'subscription' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'subscription' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Repeat className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          {subBadge > 0 && (
-            <span className="absolute top-0 right-1.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-teal-500 text-slate-950 text-[8px] sm:text-[9px] font-black rounded-full flex items-center justify-center z-20 ring-2 ring-[#0a0f1d]">
-              {subBadge}
-            </span>
-          )}
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Langgan</span>
-        </button>
-
-        {/* 6. Analisis */}
-        <button
-          onClick={() => onChangeTab('analysis')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'analysis' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'analysis' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Analisis</span>
-        </button>
-
-        {/* 7. Kenderaan */}
-        <button
-          onClick={() => onChangeTab('vehicle')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'vehicle' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'vehicle' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Car className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          {vehicleBadge > 0 && (
-            <span className="absolute top-0 right-1.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-rose-500 text-white text-[8px] sm:text-[9px] font-black rounded-full flex items-center justify-center z-20 ring-2 ring-[#0a0f1d]">
-              {vehicleBadge}
-            </span>
-          )}
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Kereta</span>
-        </button>
-
-        {/* 8. Minyak */}
-        <button
-          onClick={() => onChangeTab('fuel')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'fuel' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'fuel' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Fuel className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Minyak</span>
-        </button>
-
-        {/* 9. Tetapan */}
-        <button
-          onClick={() => onChangeTab('settings')}
-          className={`flex-1 min-w-[48px] sm:min-w-[54px] flex flex-col items-center justify-center py-1 relative transition-colors ${
-            currentTab === 'settings' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative p-1 rounded-xl">
-            {currentTab === 'settings' && (
-              <motion.div
-                layoutId="activeTabIndicator"
-                className="absolute inset-0 bg-emerald-500/15 rounded-xl border border-emerald-500/30"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Settings className="w-4 h-4 sm:w-5 sm:h-5 relative z-10" />
-          </div>
-          <span className="text-[9px] sm:text-[10px] mt-0.5 tracking-tight relative z-10">Tetapan</span>
+export function BottomNavigation({ currentTab, onChangeTab, debtBadge = 0, billBadge = 0, subBadge = 0, vehicleBadge = 0 }: BottomNavProps) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
+  const root = useRef<HTMLElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const counts: Record<NavigationBadgeKey, number> = { debt: debtBadge, bills: billBadge, subscription: subBadge, vehicle: vehicleBadge };
+  const selectedSecondary = SECONDARY_DESTINATIONS.find(item => item.id === currentTab);
+  const secondaryCount = SECONDARY_DESTINATIONS.reduce((sum, item) => sum + (item.badge ? counts[item.badge] : 0), 0);
+  const close = (restoreFocus = false) => { setExpanded(false); if (restoreFocus) trigger.current?.focus(); };
+  useEffect(() => { setExpanded(false); }, [currentTab]);
+  useEffect(() => {
+    if (!expanded) return;
+    panel.current?.querySelector<HTMLButtonElement>('button[aria-current="page"], button')?.focus();
+    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setExpanded(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setExpanded(false); trigger.current?.focus(); } };
+    const wide = window.matchMedia('(min-width: 960px)');
+    const resized = () => { if (wide.matches) { setExpanded(false); const desktop = root.current?.querySelector<HTMLButtonElement>('.navigation-desktop button[aria-current="page"]'); desktop?.focus(); } };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    wide.addEventListener('change', resized);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); wide.removeEventListener('change', resized); };
+  }, [expanded]);
+  const select = (id: TabType, fromPanel = false) => { close(fromPanel); onChangeTab(id); };
+  return <nav ref={root} className="navigation-shell" aria-label="Navigasi utama" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setExpanded(false); }}>
+    <div className="navigation-container">
+      {expanded && <section ref={panel} id={panelId} className="navigation-panel" aria-label="Destinasi lain">
+        <div className="navigation-panel-heading"><h2>Semua modul</h2><button type="button" className="navigation-close" aria-label="Tutup menu" onClick={() => close(true)}><X size={20} aria-hidden="true" /></button></div>
+        {NAVIGATION_GROUPS.map(group => {
+          const destinations = SECONDARY_DESTINATIONS.filter(item => item.group === group);
+          return <div className="navigation-group" key={group}><h3>{group}</h3><div className="navigation-group-items">{destinations.map(item => <NavigationItem key={item.id} destination={item} compact active={currentTab === item.id} count={item.badge ? counts[item.badge] : 0} onSelect={() => select(item.id, true)} />)}</div></div>;
+        })}
+      </section>}
+      <div className="navigation-mobile">
+        {PRIMARY_DESTINATIONS.map(item => <NavigationItem key={item.id} destination={item} active={currentTab === item.id} count={item.badge ? counts[item.badge] : 0} onSelect={() => select(item.id)} />)}
+        <button ref={trigger} type="button" className={`navigation-item navigation-more${selectedSecondary || expanded ? ' is-active' : ''}`} aria-expanded={expanded} aria-controls={panelId}
+          aria-label={`Lain-lain${selectedSecondary ? `, ${selectedSecondary.label} dipilih` : ''}${secondaryCount > 0 ? `, ${secondaryCount} peringatan` : ''}`} onClick={() => setExpanded(value => !value)}>
+          <span className="navigation-icon"><Grid2X2 size={22} strokeWidth={1.75} aria-hidden="true" /><NavigationBadge count={secondaryCount} /></span>
+          <span className="navigation-label">{selectedSecondary?.label || 'Lain-lain'}</span>
         </button>
       </div>
+      <div className="navigation-desktop">{NAVIGATION_DESTINATIONS.map(item => <NavigationItem key={item.id} destination={item} active={currentTab === item.id} count={item.badge ? counts[item.badge] : 0} onSelect={() => select(item.id)} />)}</div>
     </div>
-  );
-};
+  </nav>;
+}
