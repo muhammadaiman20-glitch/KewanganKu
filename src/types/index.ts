@@ -19,7 +19,14 @@ export interface DebtPayment {
   notes?: string;
 }
 
+export interface BankDetails {
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+}
+
 export interface DebtItem {
+  bankDetails?: BankDetails;
   id: string;
   title: string;
   creditor: string;
@@ -68,6 +75,7 @@ export interface BillPaymentRecord {
 }
 
 export interface RecurringBillItem {
+  bankDetails?: BankDetails;
   id: string;
   name: string; // e.g. "TNB - Bil Elektrik Kediaman"
   provider: string; // e.g. "Tenaga Nasional Berhad"

@@ -1,3 +1,4 @@
+import { BankPaymentDetails } from './BankPaymentDetails';
 import React, { useState } from 'react';
 import {
   Calendar as CalendarIcon,
@@ -376,7 +377,7 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
     setSelectedBillForPay(bill);
     setPayAmount(bill.amount.toString());
     setPayDate(new Date().toISOString().split('T')[0]);
-    setPayRefNo(`PAY-${Date.now().toString().slice(-6)}`);
+    setPayRefNo('');
     setPayMethod(bill.paymentMethod || 'JomPAY');
     setPayNotes(`Bayaran bil kitaran ${monthNamesMalay[calendarDate.getMonth()]} ${currentYear}`);
     setIsPaymentModalOpen(true);
@@ -818,7 +819,7 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
                   return (
                     <div
                       key={bill.id}
-                      className={`p-4 rounded-2xl border transition flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                      className={`p-4 rounded-2xl border transition flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-4 ${
                         isPaid
                           ? 'bg-slate-950/40 border-emerald-500/20'
                           : isOverdue
@@ -876,6 +877,8 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
                           </div>
                         </div>
                       </div>
+
+                      <div className="w-full md:order-last"><BankPaymentDetails key={bill.id} bank={bill.bankDetails} amount={bill.amount} onSave={bankDetails => onUpdateBill({ ...bill, bankDetails })} /></div>
 
                       {/* Right: Amount, Status & Actions */}
                       <div className="flex items-center justify-between md:justify-end gap-3.5 pt-3 md:pt-0 border-t md:border-t-0 border-slate-800">
@@ -1152,6 +1155,8 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
                       </div>
                     )}
                   </div>
+
+                  <BankPaymentDetails key={bill.id} bank={bill.bankDetails} amount={bill.amount} onSave={bankDetails => onUpdateBill({ ...bill, bankDetails })} />
 
                   {/* Bottom Actions */}
                   <div className="mt-5 pt-3.5 border-t border-slate-800 flex items-center justify-between gap-2">

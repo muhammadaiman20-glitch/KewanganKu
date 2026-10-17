@@ -36,8 +36,9 @@ export function conflictDetails(paths: string[], local: AppDatabase, cloud: AppD
     if (v === undefined) return 'Dipadam'; if (v === null) return 'Kosong';
     if (typeof v !== 'object') return String(v);
     if (Array.isArray(v)) return `${v.length} rekod`;
-    if (Array.isArray(v.payments)) return `${v.title}: baki RM${v.remainingBalance}; ${v.payments.length} bayaran`;
-    if (Array.isArray(v.paymentHistory)) return `${v.name}: RM${v.amount}; ${v.status}; ${v.paymentHistory.length} bayaran`;
+    const bank = v.bankDetails ? `; bank ${v.bankDetails.bankName}, akaun ${v.bankDetails.accountNumber}, pemegang ${v.bankDetails.accountHolder}` : '';
+    if (Array.isArray(v.payments)) return `${v.title}: baki RM${v.remainingBalance}; ${v.payments.length} bayaran${bank}`;
+    if (Array.isArray(v.paymentHistory)) return `${v.name}: RM${v.amount}; ${v.status}; ${v.paymentHistory.length} bayaran${bank}`;
     if (Array.isArray(v.services)) return `${v.name}: ${v.currentOdometer} km; ${v.services.length} servis`;
     return [v.description || v.name || v.station, v.amount != null ? `RM${v.amount}` : '', v.date || ''].filter(Boolean).join(' · ') || 'Rekod dikemas kini';
   };

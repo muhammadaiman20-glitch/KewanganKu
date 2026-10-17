@@ -44,7 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-extrabold text-white tracking-tight">KewanganKu</h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              <span className="hidden sm:inline text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                 PRO M3
               </span>
             </div>

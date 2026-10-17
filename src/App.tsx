@@ -411,6 +411,7 @@ export default function App() {
               <DebtScreen
                 debts={data.debts}
                 onAddDebt={handleAddDebt}
+                onUpdateDebt={debt => setData(prev => ({ ...prev, debts: prev.debts.map(item => item.id === debt.id ? debt : item) }))}
                 onRecordPayment={handleRecordDebtPayment}
                 onUpdateDebtMonthlyInstallment={handleUpdateDebtMonthlyInstallment}
                 onOpenOcrWithModule={handleOpenOcrWithModule}

@@ -1,3 +1,4 @@
+import { BankPaymentDetails } from './BankPaymentDetails';
 import React, { useState } from 'react';
 import {
   CreditCard,
@@ -25,6 +26,7 @@ interface DebtScreenProps {
   debts: DebtItem[];
   onAddDebt: (debt: Omit<DebtItem, 'id' | 'payments' | 'createdAt'>) => void;
   onRecordPayment: (debtId: string, amount: number, notes?: string, refNo?: string) => void;
+  onUpdateDebt: (debt: DebtItem) => void;
   onUpdateDebtMonthlyInstallment?: (debtId: string, newMonthly: number) => void;
   onOpenOcrWithModule: (moduleHint: 'debt') => void;
 }
@@ -33,6 +35,7 @@ export const DebtScreen: React.FC<DebtScreenProps> = ({
   debts,
   onAddDebt,
   onRecordPayment,
+  onUpdateDebt,
   onUpdateDebtMonthlyInstallment,
   onOpenOcrWithModule,
 }) => {
@@ -125,7 +128,7 @@ export const DebtScreen: React.FC<DebtScreenProps> = ({
     setSelectedDebt(debt);
     setPayAmount(debt.monthlyInstallment.toString());
     setPayNotes(`Bayaran ansuran bulan ${new Intl.DateTimeFormat('ms-MY', { month: 'long' }).format(new Date())}`);
-    setPayRefNo(`MBB-FPX-${Math.floor(100000 + Math.random() * 900000)}`);
+    setPayRefNo('');
     setIsPayModalOpen(true);
   };
 
@@ -328,6 +331,8 @@ export const DebtScreen: React.FC<DebtScreenProps> = ({
                   />
                 </div>
               </div>
+
+              <BankPaymentDetails key={debt.id} bank={debt.bankDetails} amount={Math.min(debt.monthlyInstallment, debt.remainingBalance)} onSave={bankDetails => onUpdateDebt({ ...debt, bankDetails })} />
 
               {/* Actions & Recent Payment */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
@@ -654,3 +659,4 @@ export const DebtScreen: React.FC<DebtScreenProps> = ({
     </div>
   );
 };
+
