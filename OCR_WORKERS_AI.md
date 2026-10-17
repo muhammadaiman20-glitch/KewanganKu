@@ -23,3 +23,7 @@ Validation:
 - `npm run lint` and `npm run build`.
 - Live Workers AI tests on synthetic fuel and meal receipts: RM65 total/31.7 L, and RM15.90 total respectively; cash/change excluded. Blank image returned null fields.
 - Chromium UI test with normalized live-model output: upload, review, explicit fuel details, save once and unreadable-result error; mobile/desktop screenshots reviewed.
+
+## Camera interface
+
+Imbas uses a full-screen camera layout based on the Ronda camera surface: top controls, receipt framing guides, a central shutter, gallery picker and receipt preview. Camera access starts only after the user presses Open Camera/shutter; front/back switching is available during capture. The scan uses the complete camera frame (guides are visual assistance, not automatic cropping). Receipt results appear in a separate review sheet; closing it keeps the current draft. Native dialogs isolate keyboard focus and Escape closes the review before leaving the scanner. Exiting the scanner stops media tracks and aborts outstanding OCR requests. Camera hardware still depends on the user's device and browser permissions.
