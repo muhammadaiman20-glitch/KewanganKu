@@ -1,15 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion, Variants } from 'framer-motion';
 import { AppDatabase, DebtItem, FuelLogItem, SubscriptionItem, TabType, UserProfile, VehicleItem, VehicleServiceLog } from './types';
 import {
   loadDatabase,
+  resetDatabase,
   saveDatabase,
-  INITIAL_DEBTS,
-  INITIAL_BILLS,
-  INITIAL_SUBSCRIPTIONS,
-  INITIAL_VEHICLES,
-  INITIAL_FUEL_LOGS,
-  INITIAL_USER_PROFILE,
   daysUntil,
 } from './services/storage';
 import { VoiceInput } from './components/VoiceInput';
@@ -67,6 +62,9 @@ const pageVariants: Variants = {
 };
 
 export default function App() {
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [resetGeneration, setResetGeneration] = useState(0);
+  useEffect(() => () => { if (syncTimer.current) clearTimeout(syncTimer.current); }, []);
   const [data, setData] = useState<AppDatabase>(() => loadDatabase());
   const [currentTab, setCurrentTab] = useState<TabType>('dashboard');
   const [direction, setDirection] = useState<number>(0);
@@ -97,7 +95,8 @@ export default function App() {
   // Google Drive cloud sync simulation
   const handleTriggerSync = () => {
     setSyncing(true);
-    setTimeout(() => {
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
       setData((prev) => ({
         ...prev,
         profile: {
@@ -383,7 +382,7 @@ export default function App() {
 
       {/* Main Content Area with Smooth Page Slide Transitions */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 pt-5 pb-[calc(var(--navigation-height)+var(--navigation-inset)+24px)] overflow-x-hidden">
-        <VoiceInput vehicles={data.vehicles} screen={currentTab}
+        <VoiceInput key={resetGeneration} vehicles={data.vehicles} screen={currentTab}
           onSaveFuel={handleAddFuelLog}
           onSaveExpense={(expense) => {
             setData(prev => ({ ...prev, expenses: [{ ...expense, id: crypto.randomUUID() }, ...prev.expenses] }));
@@ -480,6 +479,7 @@ export default function App() {
 
             {currentTab === 'settings' && (
               <SettingsScreen
+                key={resetGeneration}
                 profile={data.profile}
                 database={data}
                 onUpdateProfile={(profile) => setData((prev) => ({ ...prev, profile }))}
@@ -487,17 +487,14 @@ export default function App() {
                   setData(newDb);
                   showToast('Pangkalan data berjaya dipulihkan!');
                 }}
-                onResetToDefaults={() => {
-                  setData({
-                    expenses: [],
-                    bills: INITIAL_BILLS,
-                    debts: INITIAL_DEBTS,
-                    subscriptions: INITIAL_SUBSCRIPTIONS,
-                    vehicles: INITIAL_VEHICLES,
-                    fuelLogs: INITIAL_FUEL_LOGS,
-                    profile: INITIAL_USER_PROFILE,
-                  });
-                  showToast('Data dikembalikan ke asal.');
+                onResetEverything={() => {
+                  const empty = resetDatabase();
+                  if (syncTimer.current) clearTimeout(syncTimer.current);
+                  syncTimer.current = null;
+                  setSyncing(false);
+                  setData(empty);
+                  setResetGeneration(value => value + 1);
+                  showToast('Semua rekod dan profil pada pelayar ini telah dikosongkan.');
                 }}
                 syncing={syncing}
                 onTriggerSync={handleTriggerSync}

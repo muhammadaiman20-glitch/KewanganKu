@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Settings,
   User,
@@ -27,7 +27,7 @@ interface SettingsScreenProps {
   database: AppDatabase;
   onUpdateProfile: (profile: UserProfile) => void;
   onRestoreDatabase: (db: AppDatabase) => void;
-  onResetToDefaults: () => void;
+  onResetEverything: () => void;
   syncing: boolean;
   onTriggerSync: () => void;
 }
@@ -37,7 +37,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   database,
   onUpdateProfile,
   onRestoreDatabase,
-  onResetToDefaults,
+  onResetEverything,
   syncing,
   onTriggerSync,
 }) => {
@@ -46,6 +46,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [userPhone, setUserPhone] = useState(profile.phone);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetText, setResetText] = useState('');
+  const [resetError, setResetError] = useState('');
+  const readerRef = useRef<FileReader | null>(null);
+  const resetTrigger = useRef<HTMLButtonElement | null>(null);
+  const confirmInput = useRef<HTMLInputElement | null>(null);
+  useEffect(() => () => { if (readerRef.current?.readyState === FileReader.LOADING) readerRef.current.abort(); }, []);
+  useEffect(() => { if (resetOpen) confirmInput.current?.focus(); }, [resetOpen]);
+
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -90,7 +99,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (readerRef.current?.readyState === FileReader.LOADING) readerRef.current.abort();
     const reader = new FileReader();
+    readerRef.current = reader;
     reader.onload = () => {
       try {
         const text = reader.result as string;
@@ -114,7 +125,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <span>Profil & Tetapan Sandaran</span>
         </h2>
         <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-          Pengurusan akaun pengguna, simpanan data offline Room DB, dan integrasi sandaran Google Drive.
+          Urus profil, eksport sandaran dan tetapkan semula data yang disimpan dalam pelayar ini.
         </p>
       </div>
 
@@ -381,31 +392,28 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
       </div>
 
-      {/* 4. Danger Zone (Reset Data) */}
-      <div className="rounded-3xl bg-rose-950/20 border border-rose-500/30 p-5 shadow-xl space-y-3">
-        <div className="flex items-center gap-2 text-rose-400">
-          <AlertTriangle className="w-5 h-5" />
-          <h3 className="text-sm font-bold">Zon Bahaya & Tetapan Semula</h3>
+      <section className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-5 space-y-4" aria-labelledby="reset-heading">
+        <div className="flex items-center gap-2 text-rose-300">
+          <Trash2 size={20} aria-hidden="true" /><h3 id="reset-heading" className="font-bold">Tetapkan semula semuanya</h3>
         </div>
-
-        <p className="text-xs text-slate-300">
-          Jika anda ingin memulakan semula dengan data contoh rasmi (Perodua Ativa, resit Petronas, pinjaman Maybank), anda boleh menetapkan semula aplikasi.
-        </p>
-
-        <button
-          onClick={() => {
-            if (confirm('Adakah anda pasti ingin menetapkan semula ke data contoh asal?')) {
-              onResetToDefaults();
-              setSaveToast('Aplikasi telah ditetapkan semula ke data contoh asal.');
-              setTimeout(() => setSaveToast(null), 3000);
-            }
-          }}
-          className="px-4 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs transition flex items-center gap-2"
-        >
-          <Trash2 className="w-4 h-4" />
-          <span>Tetapkan Semula ke Data Contoh Asal</span>
-        </button>
-      </div>
+        <p className="text-sm text-slate-200">Kosongkan semua perbelanjaan, hutang dan bayaran, bil, langganan, kenderaan, servis, log minyak serta profil dan pendapatan. Aplikasi akan bermula dengan rekod kosong.</p>
+        <p className="text-xs text-slate-300">Melibatkan data KewanganKu pada pelayar ini sahaja. Fail sandaran yang dimuat turun dan log masuk Cloudflare kekal.</p>
+        {!resetOpen ? <button ref={resetTrigger} type="button" onClick={() => { setResetText(''); setResetError(''); setResetOpen(true); }} className="min-h-11 rounded-xl bg-rose-500/20 border border-rose-400/50 px-4 py-2 text-sm font-bold text-rose-200 focus-visible:outline-2 focus-visible:outline-rose-200">Reset Everything</button> : <form className="space-y-4 border-t border-rose-500/30 pt-4" onSubmit={event => {
+          event.preventDefault(); if (resetText !== 'RESET') return;
+          try { onResetEverything(); }
+          catch { setResetError('Data tidak dapat dikosongkan kerana simpanan pelayar tidak tersedia. Tiada pengesahan berjaya dibuat. Cuba lagi.'); }
+        }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setResetOpen(false); requestAnimationFrame(() => resetTrigger.current?.focus()); } }}>
+          <p className="text-sm font-semibold text-rose-200">Tindakan ini tidak boleh dibatalkan tanpa fail sandaran. Muat turun sandaran dahulu jika diperlukan.</p>
+          <button type="button" onClick={handleExportData} className="min-h-11 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white inline-flex gap-2 items-center"><Download size={18} aria-hidden="true" />Muat turun sandaran JSON</button>
+          <label className="block text-sm text-slate-200">Taip RESET untuk mengesahkan<input ref={confirmInput} required value={resetText} onChange={event => { setResetText(event.target.value); setResetError(''); }} autoComplete="off" spellCheck={false} className="mt-2 block w-full min-h-11 rounded-xl border border-rose-400/50 bg-slate-950 px-3 py-2 text-white focus-visible:outline-2 focus-visible:outline-rose-200" /></label>
+          {resetError && <p role="alert" className="text-sm text-rose-200">{resetError}</p>}
+          <div className="flex flex-wrap gap-3">
+            <button type="submit" disabled={resetText !== 'RESET'} className="min-h-11 rounded-xl bg-rose-300 px-4 py-2 text-sm font-bold text-rose-950 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-white">Padam semua data</button>
+            <button type="button" onClick={() => { setResetOpen(false); setResetText(''); requestAnimationFrame(() => resetTrigger.current?.focus()); }} className="min-h-11 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white">Batal</button>
+          </div>
+        </form>}
+      </section>
     </div>
   );
 };
+

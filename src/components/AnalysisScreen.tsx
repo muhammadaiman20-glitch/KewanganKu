@@ -47,7 +47,7 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
   onUpdateIncome,
   onNavigate,
 }) => {
-  const currentIncome = data.profile.monthlyIncome || 6500;
+  const currentIncome = data.profile.monthlyIncome ?? 0;
   const [incomeInput, setIncomeInput] = useState<number>(currentIncome);
   const [editingIncome, setEditingIncome] = useState<boolean>(false);
 

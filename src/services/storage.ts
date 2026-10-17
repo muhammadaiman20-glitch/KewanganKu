@@ -603,3 +603,20 @@ export function parseAndValidateBackup(jsonString: string): AppDatabase {
   };
 }
 
+
+/** Reset only KewanganKu data; keep a persisted empty database so demos do not reappear. */
+export function createEmptyDatabase(): AppDatabase {
+  return {
+    expenses: [], debts: [], bills: [], subscriptions: [], vehicles: [], fuelLogs: [],
+    profile: { name: 'Pengguna', email: '', phone: '', currency: 'RM', monthlyIncome: 0,
+      theme: 'dark', googleDriveConnected: false, lastBackupTimestamp: null },
+  };
+}
+
+export function resetDatabase(): AppDatabase {
+  const empty = createEmptyDatabase();
+  // Persist first. A denied/full storage write must leave the current UI untouched.
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
+  localStorage.removeItem('kewanganku_app_data_v1');
+  return empty;
+}
