@@ -201,7 +201,7 @@ export interface ExpenseItem {
   description: string;
   amount: number;
   date: string;
-  source: 'voice' | 'manual';
+  source: 'voice' | 'manual' | 'ocr';
 }
 
 export interface AppDatabase {

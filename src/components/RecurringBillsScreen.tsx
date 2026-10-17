@@ -448,7 +448,7 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
           <button
             onClick={() => onOpenOcrWithModule('bill')}
             className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black text-xs shadow-lg shadow-amber-950/40 hover:opacity-95 transition"
-            title="Imbas Resit / Bil Utiliti Menggunakan Gemini AI"
+            title="Imbas Resit / Bil Utiliti Menggunakan Cloudflare Workers AI"
           >
             <Sparkles className="w-4 h-4" />
             <span>Imbas Resit Bil (AI)</span>
@@ -1562,3 +1562,4 @@ export const RecurringBillsScreen: React.FC<RecurringBillsScreenProps> = ({
     </div>
   );
 };
+

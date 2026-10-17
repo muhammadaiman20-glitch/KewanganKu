@@ -1,0 +1,25 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import worker, { normalizeReceipt, receiptDate, imageData, buildOcrInput, authorized } from '../public/_worker.js';
+const receipt = { merchantName: 'Shell', amount: 65, date: '2026-10-17', rawText: 'Shell\nJUMLAH RM65.00', amountEvidence: 'JUMLAH RM65.00', category: 'fuel', fuelDetails: { litres: 31.7, pricePerLitre: 2.05, fuelType: 'RON95' } };
+test('keeps evidence-backed fields and actual quantities', () => { const r=normalizeReceipt(receipt); assert.equal(r.amount,65); assert.equal(r.fuelDetails.litres,31.7); });
+test('never fills missing date, total, grade, litres', () => { const r=normalizeReceipt({rawText:'Resit kabur', category:'fuel', amount:65}); assert.equal(r.date,null); assert.equal(r.amount,null); assert.equal(r.fuelDetails.litres,null); assert.equal(r.fuelDetails.fuelType,null); });
+test('rejects invalid calendar dates and mismatched monetary evidence', () => { assert.equal(receiptDate('2026-02-30'),null); assert.equal(normalizeReceipt({...receipt,amount:100}).amount,null); });
+test('blank image result fails instead of fabricated fallback', () => { assert.throws(()=>normalizeReceipt({rawText:null}), /UNREADABLE/); });
+test('flags quantity/price mismatch and preserves extracted values for review', () => { const r=normalizeReceipt({...receipt,fuelDetails:{litres:60,pricePerLitre:2.05}}); assert.ok(r.warnings.some(s=>s.includes('tidak sepadan'))); assert.equal(r.fuelDetails.litres,60); });
+test('validates data URI and image signature, not arbitrary URLs or forged MIME', () => { assert.throws(()=>imageData('https://example.com/image.png')); assert.throws(()=>imageData('data:image/png;base64,SGVsbG8=')); assert.equal(buildOcrInput('data:image/png;base64,abc').temperature,0); });
+test('API rejects unauthenticated scans including forged header', async()=>{ const r=await worker.fetch(new Request('https://kewanganku.pages.dev/api/scan-receipt',{method:'POST',headers:{'Cf-Access-Jwt-Assertion':'fake'}}),{AI:{run(){throw Error('must not run')}}}); assert.equal(r.status,401); });
+test('Access JWT requires matching audience, issuer, email and verified signature', async()=>{
+ const pair=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+ const jwk=await crypto.subtle.exportKey('jwk',pair.publicKey);jwk.kid='test';
+ const encode=v=>Buffer.from(JSON.stringify(v)).toString('base64url');
+ const env={ACCESS_TEAM_DOMAIN:'team.cloudflareaccess.com',ACCESS_AUD:'app',OWNER_EMAIL:'owner@example.com'};
+ const make=async overrides=>{const head=encode({alg:'RS256',kid:'test'});const body=encode({iss:'https://team.cloudflareaccess.com',aud:['app'],email:'owner@example.com',exp:Date.now()/1000+100,...overrides});const unsigned=head+'.'+body;const signature=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(unsigned));return new Request('https://kewanganku.pages.dev',{headers:{'Cf-Access-Jwt-Assertion':unsigned+'.'+Buffer.from(signature).toString('base64url')}})};
+ const original=globalThis.fetch;globalThis.fetch=async()=>Response.json({keys:[jwk]});
+ try {assert.equal(await authorized(await make({}),env),true);assert.equal(await authorized(await make({aud:['other']}),env),false);assert.equal(await authorized(await make({email:'other@example.com'}),env),false);assert.equal(await authorized(await make({exp:0}),env),false);
+ const originalRun={run:async()=>({response:JSON.stringify(receipt)})}; const request=await make({});
+ const validImage='data:image/jpeg;base64,'+Buffer.from([255,216,255,0]).toString('base64');
+ const apiRequest=new Request('https://kewanganku.pages.dev/api/scan-receipt',{method:'POST',headers:{...Object.fromEntries(request.headers),'Content-Type':'application/json'},body:JSON.stringify({imageBase64:validImage})});
+ const response=await worker.fetch(apiRequest,{...env,AI:originalRun}); assert.equal(response.status,200);assert.equal((await response.json()).data.amount,65);
+ } finally {globalThis.fetch=original;}
+});

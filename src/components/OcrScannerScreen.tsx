@@ -1,639 +1,158 @@
-import React, { useState, useRef, useEffect } from 'react';
-import {
-  ScanLine,
-  Camera,
-  Upload,
-  Sparkles,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCw,
-  ArrowRight,
-  Receipt,
-  Fuel,
-  CreditCard,
-  Repeat,
-  Zap,
-  Image as ImageIcon,
-  Sliders,
-  Check,
-} from 'lucide-react';
-import { FuelLogItem, OcrScanResult, TabType, VehicleItem } from '../types';
-import { SAMPLE_RECEIPTS, SampleReceipt } from '../services/sampleReceipts';
-import { formatRM } from '../services/storage';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, Upload, ScanLine, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { DebtItem, ExpenseItem, FuelLogItem, TabType, VehicleItem } from '../types';
+import { SAMPLE_RECEIPTS } from '../services/sampleReceipts';
+import { localDate } from '../services/voiceCommand';
 
+type Extraction = {
+  merchantName: string | null; amount: number | null; date: string | null;
+  category: string; suggestedModule: string; rawText: string; amountEvidence: string | null;
+  fuelDetails?: { litres: number | null; pricePerLitre: number | null; fuelType: string | null };
+  debtDetails?: { referenceNo?: string }; subscriptionDetails?: { nextBillingDate?: string };
+};
+type OcrFuel = { vehicleId: string; vehiclePlate: string; station: string; amount: number; litres: number; pricePerLitre: number; fuelType: FuelLogItem['fuelType']; date: string; odometer: number };
 interface OcrScannerScreenProps {
   initialModule?: 'debt' | 'subscription' | 'fuel' | 'auto';
-  vehicles: VehicleItem[];
-  onSaveToDebt: (data: { creditor: string; amount: number; date: string; refNo?: string; notes?: string }) => void;
+  vehicles: VehicleItem[]; debts: DebtItem[];
+  onSaveToDebt: (data: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string }) => void;
   onSaveToSubscription: (data: { name: string; amount: number; renewalDate: string; category?: string }) => void;
-  onSaveToFuel: (data: {
-    vehicleId: string;
-    vehiclePlate: string;
-    station: string;
-    amount: number;
-    litres: number;
-    pricePerLitre: number;
-    fuelType: 'RON95' | 'RON97' | 'Diesel' | 'RON100';
-    date: string;
-  }) => void;
+  onSaveToFuel: (data: OcrFuel) => void;
+  onSaveExpense: (data: Omit<ExpenseItem, 'id'>) => void;
   onNavigate: (tab: TabType) => void;
 }
+const control = 'w-full min-h-11 rounded-xl border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus-visible:outline-2 focus-visible:outline-emerald-400';
 
-export const OcrScannerScreen: React.FC<OcrScannerScreenProps> = ({
-  initialModule = 'auto',
-  vehicles,
-  onSaveToDebt,
-  onSaveToSubscription,
-  onSaveToFuel,
-  onNavigate,
-}) => {
-  const [selectedModule, setSelectedModule] = useState<'auto' | 'fuel' | 'subscription' | 'debt'>(initialModule);
-  const [cameraActive, setCameraActive] = useState<boolean>(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [scanning, setScanning] = useState<boolean>(false);
-  const [scanResult, setScanResult] = useState<OcrScanResult | null>(null);
-  const [scanEngine, setScanEngine] = useState<string>('gemini-3.8-flash');
-  const [engineNotice, setEngineNotice] = useState<string | null>(null);
+async function prepareImage(dataUrl: string): Promise<string> {
+  const img = new Image(); img.src = dataUrl; await img.decode();
+  if (!img.width || !img.height) throw new Error('Gambar tidak dapat dibaca.');
+  const scale = Math.min(1, 2200 / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas'); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+  const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Pelayar tidak dapat menyediakan gambar.');
+  ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const output = canvas.toDataURL('image/jpeg', 0.94);
+  if (output.length > 7 * 1024 * 1024) throw new Error('Gambar terlalu besar. Potong gambar kepada bahagian resit dan cuba lagi.');
+  return output;
+}
 
-  // Editable result fields before saving
-  const [merchant, setMerchant] = useState('');
-  const [amount, setAmount] = useState('');
-  const [date, setDate] = useState('');
-  const [category, setCategory] = useState<'fuel' | 'subscription' | 'debt'>('fuel');
-  const [litres, setLitres] = useState('');
-  const [fuelType, setFuelType] = useState<'RON95' | 'RON97' | 'Diesel' | 'RON100'>('RON95');
-  const [selectedVehId, setSelectedVehId] = useState(vehicles[0]?.id || '');
-  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Initialize camera
+export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSaveToDebt, onSaveToSubscription, onSaveToFuel, onSaveExpense, onNavigate }: OcrScannerScreenProps) {
+  const [image, setImage] = useState<string | null>(null);
+  const [camera, setCamera] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [result, setResult] = useState<Extraction | null>(null);
+  const [merchant, setMerchant] = useState(''); const [amount, setAmount] = useState(''); const [date, setDate] = useState('');
+  const [category, setCategory] = useState(initialModule === 'auto' ? 'expense' : initialModule);
+  const [litres, setLitres] = useState(''); const [fuelType, setFuelType] = useState('');
+  const [vehicleId, setVehicleId] = useState(''); const [odometer, setOdometer] = useState('');
+  const [debtId, setDebtId] = useState(''); const [renewal, setRenewal] = useState('');
+  const [reviewed, setReviewed] = useState(false); const [saved, setSaved] = useState(false);
+  const video = useRef<HTMLVideoElement>(null); const input = useRef<HTMLInputElement>(null);
+  const stream = useRef<MediaStream | null>(null); const pending = useRef<AbortController | null>(null);
+  const sequence = useRef(0); const alive = useRef(true); const saving = useRef(false);
+  const stopCamera = () => { stream.current?.getTracks().forEach(t => t.stop()); stream.current = null; setCamera(false); };
+  useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; pending.current?.abort(); stream.current?.getTracks().forEach(t => t.stop()); }; }, []);
+  useEffect(() => { if (camera && video.current && stream.current) { video.current.srcObject = stream.current; void video.current.play().catch(() => setNotice('Kamera tidak dapat dimainkan. Cuba buka semula atau muat naik gambar.')); } }, [camera]);
   const startCamera = async () => {
-    setCameraError(null);
+    stopCamera(); setNotice('');
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch (err: any) {
-      console.warn('Camera access denied or unavailable:', err);
-      setCameraError('Kamera tidak dapat diakses atau disekat oleh pelayar. Anda boleh muat naik fail atau gunakan resit contoh segera di bawah.');
-      setCameraActive(false);
-    }
+      const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      if (!alive.current) { media.getTracks().forEach(t => t.stop()); return; }
+      stream.current = media; setImage(null); setCamera(true);
+    } catch { if (alive.current) setNotice('Kamera tidak tersedia atau akses ditolak. Benarkan kamera atau muat naik gambar resit.'); }
   };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  };
-
-  useEffect(() => {
-    // Start camera by default if supported
-    startCamera();
-    return () => {
-      stopCamera();
-    };
-  }, []);
-
-  const capturePhoto = () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      setCapturedImage(dataUrl);
-      stopCamera();
-      triggerOcrScan(dataUrl);
-    }
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      setCapturedImage(base64);
-      stopCamera();
-      triggerOcrScan(base64);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSelectSampleReceipt = (sample: SampleReceipt) => {
-    const dataUrl = sample.renderToDataUrl();
-    setCapturedImage(dataUrl);
-    stopCamera();
-    triggerOcrScan(dataUrl);
-  };
-
-  const triggerOcrScan = async (imageBase64: string) => {
-    setScanning(true);
-    setScanResult(null);
-    setSaveSuccess(null);
-    setEngineNotice(null);
-
+  const scan = async (source: string) => {
+    pending.current?.abort(); const id = ++sequence.current; const controller = new AbortController(); pending.current = controller;
+    setBusy(true); setResult(null); setNotice(''); setSaved(false); setReviewed(false); stopCamera();
+    const timeout = setTimeout(() => controller.abort(), 90000);
     try {
-      const response = await fetch('/api/scan-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64,
-          mimeType: 'image/jpeg',
-          targetModule: selectedModule,
-        }),
-      });
-
-      const resData = await response.json();
-      const extracted: OcrScanResult = resData.data;
-
-      setScanEngine(resData.source || 'gemini-3.8-flash');
-      if (resData.warning) {
-        setEngineNotice(resData.warning);
-      }
-
-      setScanResult(extracted);
-      // Populate editable fields
-      setMerchant(extracted.merchantName || 'Peniaga Tidak Dikenali');
-      setAmount((extracted.amount || 0).toString());
-      setDate(extracted.date || new Date().toISOString().split('T')[0]);
-
-      const inferredCat = (extracted.suggestedModule || extracted.category || 'fuel') as 'fuel' | 'subscription' | 'debt';
-      setCategory(inferredCat);
-
-      if (extracted.fuelDetails) {
-        setLitres((extracted.fuelDetails.litres || 0).toString());
-        if (extracted.fuelDetails.fuelType === 'RON97') setFuelType('RON97');
-        else if (extracted.fuelDetails.fuelType === 'Diesel') setFuelType('Diesel');
-        else setFuelType('RON95');
-      }
-    } catch (err: any) {
-      console.error('Scan error:', err);
-      setEngineNotice('Gagal berhubung ke pelayan OCR. Sila cuba lagi.');
-    } finally {
-      setScanning(false);
-    }
+      const prepared = await prepareImage(source); if (!alive.current || sequence.current !== id) return;
+      setImage(prepared);
+      const response = await fetch('/api/scan-receipt', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: prepared }), signal: controller.signal });
+      if (response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Sesi log masuk tamat. Muat semula laman dan log masuk semula.');
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Imbasan gagal. Sila cuba lagi.');
+      const data: Extraction = payload.data; if (!data?.rawText) throw new Error('Resit tidak dapat dibaca. Ambil semula gambar yang lebih jelas.');
+      if (!alive.current || sequence.current !== id) return;
+      setResult(data); setMerchant(data.merchantName || ''); setAmount(data.amount == null ? '' : String(data.amount)); setDate(data.date || '');
+      setCategory(['fuel', 'subscription', 'debt'].includes(data.suggestedModule) ? data.suggestedModule : 'expense');
+      setLitres(data.fuelDetails?.litres == null ? '' : String(data.fuelDetails.litres)); setFuelType(data.fuelDetails?.fuelType || '');
+      setVehicleId(''); setOdometer(''); setDebtId(''); setRenewal(data.subscriptionDetails?.nextBillingDate || '');
+      setNotice(payload.warning || 'Semak maklumat sebelum menyimpan.');
+    } catch (e) { if (alive.current && sequence.current === id) setNotice(e instanceof Error && e.name === 'AbortError' ? 'Imbasan mengambil masa terlalu lama. Cuba lagi.' : e instanceof Error ? e.message : 'Imbasan gagal. Cuba lagi.'); }
+    finally { clearTimeout(timeout); if (alive.current && sequence.current === id) { setBusy(false); pending.current = null; } }
   };
-
-  const handleCommitSave = () => {
-    const numAmount = parseFloat(amount) || 0;
-    if (numAmount <= 0) return;
-
-    if (category === 'fuel') {
-      const v = vehicles.find((x) => x.id === selectedVehId) || vehicles[0];
-      const ltr = parseFloat(litres) || numAmount / 2.05;
-      const priceLtr = numAmount / (ltr || 1);
-
-      onSaveToFuel({
-        vehicleId: v?.id || 'veh-1',
-        vehiclePlate: v?.plateNumber || 'VHY 8821',
-        station: merchant,
-        amount: numAmount,
-        litres: parseFloat(ltr.toFixed(2)),
-        pricePerLitre: parseFloat(priceLtr.toFixed(2)),
-        fuelType,
-        date: date || new Date().toISOString().split('T')[0],
-      });
-      setSaveSuccess(`Berjaya disimpan ke Log Minyak ${v?.plateNumber || ''}!`);
-    } else if (category === 'subscription') {
-      onSaveToSubscription({
-        name: merchant,
-        amount: numAmount,
-        renewalDate: date || new Date().toISOString().split('T')[0],
-        category: 'entertainment',
-      });
-      setSaveSuccess(`Berjaya disimpan ke Pengurusan Langganan (${merchant})!`);
-    } else if (category === 'debt') {
-      onSaveToDebt({
-        creditor: merchant,
-        amount: numAmount,
-        date: date || new Date().toISOString().split('T')[0],
-        notes: `Bayaran diimbas dari resit ${merchant}`,
-      });
-      setSaveSuccess(`Berjaya direkodkan sebagai Bayaran Hutang (${merchant})!`);
-    }
+  const capture = () => { const v = video.current; if (!v?.videoWidth) { setNotice('Tunggu sehingga kamera bersedia.'); return; } const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d')?.drawImage(v, 0, 0); void scan(c.toDataURL('image/jpeg', 0.94)); };
+  const reset = () => { sequence.current++; pending.current?.abort(); stopCamera(); setBusy(false); setImage(null); setResult(null); setNotice(''); setSaved(false); setReviewed(false); };
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault(); if (saving.current || saved || !reviewed) return;
+    const total = Number(amount); if (!Number.isFinite(total) || total <= 0 || !merchant.trim() || !date || date > localDate()) { setNotice('Lengkapkan nama, jumlah positif dan tarikh transaksi yang sah.'); return; }
+    saving.current = true;
+    try {
+      if (category === 'fuel') {
+        const v = vehicles.find(v => v.id === vehicleId); const qty = Number(litres); const odo = Number(odometer);
+        if (!v || !fuelType || !Number.isFinite(qty) || qty <= 0 || !odometer || !Number.isFinite(odo) || odo < v.currentOdometer) throw new Error('Pilih kenderaan, gred minyak, liter dan bacaan odometer sebenar (tidak kurang daripada bacaan semasa).');
+        onSaveToFuel({ vehicleId: v.id, vehiclePlate: v.plateNumber, station: merchant.trim(), amount: total, date, litres: qty, pricePerLitre: Number((total / qty).toFixed(4)), odometer: odo, fuelType: fuelType as FuelLogItem['fuelType'] });
+      } else if (category === 'debt') {
+        if (!debtId) throw new Error('Pilih hutang yang betul sebelum merekodkan bayaran.');
+        onSaveToDebt({ debtId, creditor: merchant.trim(), amount: total, date, refNo: result?.debtDetails?.referenceNo, notes: 'Bayaran daripada resit OCR yang disemak.' });
+      } else if (category === 'subscription') {
+        if (!renewal) throw new Error('Masukkan tarikh pembaharuan seterusnya. Tarikh resit bukan tarikh pembaharuan.');
+        onSaveToSubscription({ name: merchant.trim(), amount: total, renewalDate: renewal, category: 'other' });
+      } else onSaveExpense({ description: merchant.trim(), amount: total, date, source: 'ocr' });
+      setSaved(true); setNotice('Rekod berjaya disimpan.');
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Rekod tidak dapat disimpan.'); }
+    finally { saving.current = false; }
   };
-
-  const resetScanner = () => {
-    setCapturedImage(null);
-    setScanResult(null);
-    setSaveSuccess(null);
-    startCamera();
-  };
-
-  return (
-    <div className="space-y-6 pb-24">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 rounded-xl bg-gradient-to-tr from-emerald-500 to-amber-400 text-slate-950 font-bold">
-              <ScanLine className="w-5 h-5" />
-            </span>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-              Pengimbas Resit AI Pintar
-            </h2>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Dikuasakan oleh Gemini AI & Google ML Kit untuk mengekstrak Nama, Jumlah (RM), Tarikh, dan Kategori secara automatik.
-          </p>
+  return <div className="space-y-5 pb-8">
+    <header><h2 className="text-xl font-bold flex gap-2 items-center"><ScanLine className="text-emerald-300" />Imbas resit</h2><p className="text-sm text-slate-300 mt-2">Cloudflare Workers AI membaca nama peniaga, jumlah, tarikh dan butiran minyak. Semak bacaan sebelum menyimpan.</p></header>
+    <div className="grid lg:grid-cols-2 gap-5 items-start">
+      <section className="space-y-4" aria-label="Gambar resit">
+        <div className="rounded-2xl bg-slate-900 overflow-hidden min-h-48 flex justify-center items-center">
+          {camera ? <video ref={video} autoPlay playsInline muted className="w-full max-h-[65vh] object-contain" /> : image ? <img src={image} alt="Resit untuk disemak" className="max-h-[65vh] w-full object-contain" /> : <div className="p-8 text-center text-slate-300"><ScanLine className="mx-auto mb-3" size={32} /><p>Pastikan seluruh resit jelas, lurus dan tidak silau.</p></div>}
         </div>
-
-        {/* Target Module Selector */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-900 border border-slate-800">
-          {(
-            [
-              { id: 'auto', label: 'Auto-Kesan' },
-              { id: 'fuel', label: 'Minyak' },
-              { id: 'subscription', label: 'Langganan' },
-              { id: 'debt', label: 'Hutang' },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setSelectedModule(t.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                selectedModule === t.id
-                  ? 'bg-emerald-500 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={busy} onClick={camera ? capture : startCamera} className="min-h-11 px-4 py-2 rounded-xl bg-emerald-400 text-slate-950 font-semibold inline-flex gap-2 items-center disabled:opacity-50"><Camera size={18} />{camera ? 'Ambil gambar' : 'Buka kamera'}</button>
+          <button type="button" disabled={busy} onClick={() => input.current?.click()} className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 font-semibold inline-flex gap-2 items-center disabled:opacity-50"><Upload size={18} />Muat naik</button>
+          {(image || camera || busy) && <button type="button" onClick={reset} className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 inline-flex gap-2 items-center"><RefreshCw size={18} />{busy ? 'Batal' : 'Mula semula'}</button>}
         </div>
-      </div>
-
-      {/* Main Viewport Container */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Camera Viewport / Captured Image */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="relative w-full aspect-[4/3] sm:aspect-[16/10] bg-slate-950 rounded-3xl border-2 border-slate-800 overflow-hidden shadow-2xl flex items-center justify-center">
-            {/* If has captured image */}
-            {capturedImage ? (
-              <img
-                src={capturedImage}
-                alt="Captured Receipt"
-                className="w-full h-full object-contain bg-slate-950"
-              />
-            ) : cameraActive ? (
-              /* Live Camera Feed */
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              /* Camera Idle or Permission Blocked */
-              <div className="text-center p-6 space-y-3 max-w-sm">
-                <div className="w-14 h-14 rounded-3xl bg-slate-900 border border-slate-800 text-slate-500 flex items-center justify-center mx-auto">
-                  <Camera className="w-7 h-7" />
-                </div>
-                <h4 className="text-sm font-bold text-white">Kamera Belum Aktif</h4>
-                <p className="text-xs text-slate-400">
-                  {cameraError || 'Aktifkan kamera peranti untuk mula mengimbas resit fizikal.'}
-                </p>
-                <button
-                  onClick={startCamera}
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md transition"
-                >
-                  Buka Kamera
-                </button>
+        <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Fail resit" onChange={async event => {
+          const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+          if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) { setNotice('Pilih gambar JPEG, PNG atau WebP sehingga 20 MB.'); return; }
+          const url = URL.createObjectURL(file); try { await scan(url); } finally { URL.revokeObjectURL(url); }
+        }} />
+        <p className="text-xs text-slate-300">Gambar dihantar kepada Cloudflare untuk imbasan. Aplikasi tidak menyimpan gambar pada pelayan.</p>
+        <details className="rounded-xl bg-slate-900 p-4"><summary className="cursor-pointer text-sm font-semibold">Cuba resit contoh</summary><p className="text-xs text-slate-300 my-3">Data demonstrasi. Jangan simpan sebagai transaksi sebenar.</p><div className="flex flex-wrap gap-2">{SAMPLE_RECEIPTS.map(sample => <button type="button" key={sample.id} disabled={busy} onClick={() => void scan(sample.renderToDataUrl())} className="min-h-11 rounded-lg bg-slate-800 px-3 text-sm disabled:opacity-50">{sample.thumbnailTitle}</button>)}</div></details>
+      </section>
+      <section className="rounded-2xl bg-slate-900 p-4 sm:p-5 space-y-4" aria-label="Semakan hasil OCR" aria-busy={busy}>
+        <div className="flex justify-between gap-3 items-center"><h3 className="font-bold">Semak hasil bacaan</h3><span className="text-xs text-emerald-300">Workers AI · Vision</span></div>
+        <p role="status" aria-live="polite" className="text-sm text-emerald-200">{busy ? 'Membaca teks dan menyemak jumlah resit…' : notice || 'Hasil bacaan akan muncul selepas imbasan.'}</p>
+        {result && <>
+          {result.amountEvidence && <p className="text-sm text-slate-300">Bukti jumlah: <strong className="text-white">{result.amountEvidence}</strong></p>}
+          <details><summary className="cursor-pointer text-sm text-emerald-300">Lihat teks yang dibaca</summary><pre className="mt-2 whitespace-pre-wrap break-words text-xs text-slate-300 max-h-56 overflow-y-auto font-sans">{result.rawText}</pre></details>
+          <form onSubmit={submit} className="space-y-4" onChange={() => setReviewed(false)}>
+            <fieldset disabled={saved} className="space-y-4 disabled:opacity-60">
+              <label className="block text-sm">Nama peniaga / keterangan<input required className={`${control} mt-1`} value={merchant} onChange={e => setMerchant(e.target.value)} /></label>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="block text-sm">Jumlah (RM)<input required type="number" min="0.01" step="0.01" className={`${control} mt-1`} value={amount} onChange={e => setAmount(e.target.value)} /></label>
+                <label className="block text-sm">Tarikh transaksi<input required type="date" max={localDate()} className={`${control} mt-1`} value={date} onChange={e => setDate(e.target.value)} /></label>
               </div>
-            )}
-
-            {/* Scanning Laser Line Overlay when scanning */}
-            {scanning && (
-              <div className="absolute inset-0 pointer-events-none bg-emerald-500/10">
-                <div className="w-full h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-laser absolute" />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="px-4 py-2 rounded-2xl bg-black/80 backdrop-blur-md border border-emerald-500/50 text-emerald-300 font-bold text-xs flex items-center gap-2 animate-pulse">
-                    <Sparkles className="w-4 h-4 text-emerald-400 animate-spin" />
-                    <span>Gemini AI sedang membaca teks resit...</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Target Reticle Frame Overlay */}
-            {!capturedImage && cameraActive && (
-              <div className="absolute inset-8 pointer-events-none border-2 border-emerald-500/40 rounded-2xl flex flex-col justify-between p-3">
-                <div className="flex justify-between">
-                  <div className="w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg" />
-                  <div className="w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg" />
-                </div>
-                <div className="text-center">
-                  <span className="px-3 py-1 rounded-full bg-black/60 text-slate-200 text-[11px] font-medium backdrop-blur-sm">
-                    Posisikan resit dalam petak ini
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <div className="w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg" />
-                  <div className="w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Scanner Controls Toolbar */}
-          <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900 border border-slate-800">
-            {capturedImage ? (
-              <button
-                onClick={resetScanner}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Ambil Semula</span>
-              </button>
-            ) : (
-              <button
-                onClick={capturePhoto}
-                disabled={!cameraActive}
-                className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-950/40 transition disabled:opacity-50"
-              >
-                <Camera className="w-4 h-4" />
-                <span>Tangkap Gambar Resit</span>
-              </button>
-            )}
-
-            {/* File Upload Hidden Input */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="image/*"
-              className="hidden"
-              onChange={handleFileUpload}
-            />
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
-            >
-              <Upload className="w-4 h-4 text-emerald-400" />
-              <span>Muat Naik Imej</span>
-            </button>
-          </div>
-
-          {/* Interactive Sample Receipts Selector for 1-Click Zero Friction Testing */}
-          <div className="p-4 rounded-3xl bg-slate-900/70 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                Contoh Resit Malaysia (Uji Cepat 1-Klik)
-              </span>
-              <span className="text-[10px] text-slate-400">Pilih untuk imbas segera</span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {SAMPLE_RECEIPTS.map((sample) => (
-                <button
-                  key={sample.id}
-                  onClick={() => handleSelectSampleReceipt(sample)}
-                  className="p-2.5 rounded-2xl bg-[#0b1220] border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-800/80 transition text-left space-y-1 group"
-                >
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 block w-fit">
-                    {sample.badge}
-                  </span>
-                  <p className="text-xs font-bold text-white group-hover:text-emerald-400 transition truncate">
-                    {sample.thumbnailTitle}
-                  </p>
-                  <span className="text-[10px] text-slate-400 block truncate">
-                    {sample.name.split('(')[1]?.replace(')', '') || 'RM'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: AI Extracted Data Card & Verification Form */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="rounded-3xl bg-slate-900/90 border border-slate-800 p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">Hasil Ekstrak AI OCR</h3>
-              </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-emerald-400 border border-slate-700">
-                {scanEngine}
-              </span>
-            </div>
-
-            {engineNotice && (
-              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{engineNotice}</span>
-              </div>
-            )}
-
-            {saveSuccess && (
-              <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>{saveSuccess}</span>
-                </div>
-                <button
-                  onClick={() => onNavigate(category)}
-                  className="underline text-[11px] text-white hover:text-emerald-300"
-                >
-                  Lihat &rarr;
-                </button>
-              </div>
-            )}
-
-            {scanResult ? (
-              <div className="space-y-4 animate-fade-in">
-                {scanResult.summaryMalay && (
-                  <div className="p-3 rounded-2xl bg-[#0b1220] border border-slate-800 text-xs text-slate-300">
-                    <span className="text-[10px] text-emerald-400 font-bold block mb-0.5">
-                      Ringkasan AI:
-                    </span>
-                    {scanResult.summaryMalay}
-                  </div>
-                )}
-
-                {/* Editable Fields Form */}
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-[11px] text-slate-400 font-medium block mb-1">
-                      Nama Peniaga / Institusi
-                    </label>
-                    <input
-                      type="text"
-                      value={merchant}
-                      onChange={(e) => setMerchant(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-2xl bg-[#0b1220] border border-slate-800 text-white font-bold text-xs focus:outline-none focus:border-emerald-400"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] text-slate-400 font-medium block mb-1">
-                        Jumlah (RM) *
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-2xl bg-[#0b1220] border border-slate-800 text-emerald-400 font-black text-sm focus:outline-none focus:border-emerald-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-slate-400 font-medium block mb-1">
-                        Tarikh Transaksi
-                      </label>
-                      <input
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-2xl bg-[#0b1220] border border-slate-800 text-white text-xs focus:outline-none focus:border-emerald-400"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-400 font-medium block mb-1">
-                      Kategori Modul Pilihan
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCategory('fuel')}
-                        className={`py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition ${
-                          category === 'fuel'
-                            ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Fuel className="w-3.5 h-3.5" />
-                        <span>Minyak</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setCategory('subscription')}
-                        className={`py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition ${
-                          category === 'subscription'
-                            ? 'bg-teal-500 text-slate-950 font-black shadow-md'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Repeat className="w-3.5 h-3.5" />
-                        <span>Langganan</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setCategory('debt')}
-                        className={`py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition ${
-                          category === 'debt'
-                            ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <CreditCard className="w-3.5 h-3.5" />
-                        <span>Hutang</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Conditional Module Extras */}
-                  {category === 'fuel' && (
-                    <div className="p-3.5 rounded-2xl bg-[#0b1220] border border-slate-800 space-y-3">
-                      <div>
-                        <label className="text-[10px] text-slate-400 font-medium block mb-1">
-                          Pilih Kenderaan
-                        </label>
-                        <select
-                          value={selectedVehId}
-                          onChange={(e) => setSelectedVehId(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs"
-                        >
-                          {vehicles.map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.name} ({v.plateNumber})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] text-slate-400 block mb-1">
-                            Jumlah Liter (L)
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={litres}
-                            onChange={(e) => setLitres(e.target.value)}
-                            placeholder="cth: 31.7"
-                            className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-slate-400 block mb-1">Gred Minyak</label>
-                          <select
-                            value={fuelType}
-                            onChange={(e) =>
-                              setFuelType(e.target.value as FuelLogItem['fuelType'])
-                            }
-                            className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs"
-                          >
-                            <option value="RON95">RON 95</option>
-                            <option value="RON97">RON 97</option>
-                            <option value="Diesel">Diesel</option>
-                            <option value="RON100">RON 100</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Submit Action */}
-                  <button
-                    onClick={handleCommitSave}
-                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-sm shadow-xl shadow-emerald-950/50 transition transform active:scale-95 flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>Sahkan & Masukkan ke Modul</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="py-12 text-center space-y-2 text-slate-400">
-                <Receipt className="w-10 h-10 text-slate-600 mx-auto" />
-                <p className="text-xs">
-                  {scanning
-                    ? 'Memproses gambar resit...'
-                    : 'Ambil gambar resit atau pilih contoh resit di sebelah kiri untuk melihat hasil analisis AI.'}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+              <label className="block text-sm">Simpan sebagai<select className={`${control} mt-1`} value={category} onChange={e => setCategory(e.target.value)}><option value="expense">Perbelanjaan harian / bil dibayar</option><option value="fuel">Log minyak</option><option value="subscription">Langganan</option><option value="debt">Bayaran hutang</option></select></label>
+              {category === 'fuel' && <div className="grid sm:grid-cols-2 gap-3">
+                <label className="block text-sm sm:col-span-2">Kenderaan<select required className={`${control} mt-1`} value={vehicleId} onChange={e => setVehicleId(e.target.value)}><option value="">Pilih kenderaan</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.name} ({v.plateNumber})</option>)}</select></label>
+                <label className="block text-sm">Liter<input required type="number" min="0.001" step="0.001" className={`${control} mt-1`} value={litres} onChange={e => setLitres(e.target.value)} /></label>
+                <label className="block text-sm">Gred minyak<select required className={`${control} mt-1`} value={fuelType} onChange={e => setFuelType(e.target.value)}><option value="">Pilih gred</option>{['RON95', 'RON97', 'RON100', 'Diesel'].map(type => <option key={type}>{type}</option>)}</select></label>
+                <label className="block text-sm sm:col-span-2">Odometer sebenar (km)<input required type="number" step="1" min={vehicles.find(v => v.id === vehicleId)?.currentOdometer || 0} className={`${control} mt-1`} value={odometer} onChange={e => setOdometer(e.target.value)} /></label>
+              </div>}
+              {category === 'debt' && <label className="block text-sm">Bayar kepada hutang<select required className={`${control} mt-1`} value={debtId} onChange={e => setDebtId(e.target.value)}><option value="">Pilih hutang yang betul</option>{debts.filter(d => d.status === 'active').map(d => <option key={d.id} value={d.id}>{d.title} — {d.creditor}</option>)}</select></label>}
+              {category === 'subscription' && <label className="block text-sm">Pembaharuan seterusnya<input required type="date" className={`${control} mt-1`} value={renewal} onChange={e => setRenewal(e.target.value)} /></label>}
+              <label className="flex gap-3 items-start text-sm text-slate-200 py-2"><input type="checkbox" required checked={reviewed} onChange={e => { e.stopPropagation(); setReviewed(e.target.checked); }} className="mt-1 size-5 accent-emerald-400 shrink-0" />Saya sudah semak jumlah, tarikh dan modul dengan resit asal.</label>
+              <button type="submit" disabled={!reviewed || saved} className="min-h-12 w-full rounded-xl bg-emerald-400 text-slate-950 font-bold flex gap-2 justify-center items-center disabled:opacity-40"><CheckCircle2 size={19} />{saved ? 'Rekod disimpan' : 'Sahkan & simpan'}</button>
+            </fieldset>
+          </form>
+          {saved && <button type="button" className="min-h-11 text-emerald-300 underline" onClick={() => onNavigate(category === 'expense' ? 'dashboard' : category as TabType)}>Lihat rekod</button>}
+        </>}
+        {!result && !busy && <p className="text-sm text-slate-400 flex gap-2"><AlertCircle size={18} className="shrink-0" />Bacaan yang kabur akan diminta untuk diimbas semula. Tiada data contoh digunakan sebagai gantian.</p>}
+      </section>
     </div>
-  );
-};
+  </div>;
+}

@@ -131,7 +131,7 @@ export default function App() {
     showToast(`Hutang "${item.title}" berjaya didaftarkan!`);
   };
 
-  const handleRecordDebtPayment = (debtId: string, amount: number, notes?: string, refNo?: string) => {
+  const handleRecordDebtPayment = (debtId: string, amount: number, notes?: string, refNo?: string, paymentDate?: string) => {
     setData((prev) => {
       const updatedDebts = prev.debts.map((d) => {
         if (d.id === debtId) {
@@ -140,7 +140,7 @@ export default function App() {
             id: `pay-${Date.now()}`,
             debtId: d.id,
             amount,
-            date: new Date().toISOString().split('T')[0],
+            date: paymentDate || new Date().toISOString().split('T')[0],
             referenceNo: refNo,
             notes,
           };
@@ -303,42 +303,9 @@ export default function App() {
   };
 
   // 5. OCR Scanner auto-save hooks
-  const handleOcrSaveToDebt = (ocrData: {
-    creditor: string;
-    amount: number;
-    date: string;
-    refNo?: string;
-    notes?: string;
-  }) => {
-    // Find matching active debt or allocate to first
-    const matched = data.debts.find(
-      (d) =>
-        d.status === 'active' &&
-        (d.creditor.toLowerCase().includes(ocrData.creditor.toLowerCase()) ||
-          ocrData.creditor.toLowerCase().includes(d.creditor.toLowerCase()))
-    );
-
-    if (matched) {
-      handleRecordDebtPayment(matched.id, ocrData.amount, ocrData.notes, ocrData.refNo);
-    } else if (data.debts.length > 0) {
-      handleRecordDebtPayment(data.debts[0].id, ocrData.amount, ocrData.notes, ocrData.refNo);
-    } else {
-      // Create new debt
-      handleAddDebt({
-        title: `Pinjaman ${ocrData.creditor}`,
-        creditor: ocrData.creditor,
-        type: 'personal',
-        originalAmount: ocrData.amount * 10,
-        remainingBalance: ocrData.amount * 9,
-        monthlyInstallment: ocrData.amount,
-        dueDay: 10,
-        interestRate: 3.5,
-        tenureMonthsTotal: 10,
-        tenureMonthsRemaining: 9,
-        status: 'active',
-        notes: ocrData.notes,
-      });
-    }
+  const handleOcrSaveToDebt = (ocrData: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string }) => {
+    if (!data.debts.some(d => d.id === ocrData.debtId && d.status === 'active')) throw new Error('Hutang tidak dijumpai. Pilih hutang yang betul.');
+    handleRecordDebtPayment(ocrData.debtId, ocrData.amount, ocrData.notes, ocrData.refNo, ocrData.date);
   };
 
   const handleOcrSaveToSubscription = (ocrData: {
@@ -367,8 +334,10 @@ export default function App() {
     pricePerLitre: number;
     fuelType: 'RON95' | 'RON97' | 'Diesel' | 'RON100';
     date: string;
+    odometer: number;
   }) => {
-    const veh = data.vehicles.find((v) => v.id === ocrData.vehicleId) || data.vehicles[0];
+    const veh = data.vehicles.find((v) => v.id === ocrData.vehicleId);
+    if (!veh) throw new Error('Kenderaan tidak dijumpai.');
     handleAddFuelLog({
       vehicleId: veh?.id || 'veh-1',
       vehiclePlate: veh?.plateNumber || 'VHY 8821',
@@ -377,7 +346,7 @@ export default function App() {
       litres: ocrData.litres,
       pricePerLitre: ocrData.pricePerLitre,
       fuelType: ocrData.fuelType,
-      odometer: (veh?.currentOdometer || 38000) + 480,
+      odometer: ocrData.odometer,
       date: ocrData.date,
       notes: 'Direkodkan secara automatik melalui imbasan AI OCR',
     });
@@ -491,6 +460,8 @@ export default function App() {
             {currentTab === 'ocr' && (
               <OcrScannerScreen
                 initialModule={ocrModuleHint}
+                debts={data.debts}
+                onSaveExpense={expense => { setData(prev => ({ ...prev, expenses: [{ ...expense, id: crypto.randomUUID() }, ...prev.expenses] })); showToast('Perbelanjaan resit disimpan!'); }}
                 vehicles={data.vehicles}
                 onSaveToDebt={handleOcrSaveToDebt}
                 onSaveToSubscription={handleOcrSaveToSubscription}
