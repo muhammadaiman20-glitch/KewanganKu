@@ -67,7 +67,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     .reduce((acc, curr) => acc + curr.amount, 0);
 
   const totalMonthlyCommitment =
-    monthlyDebtCommitment + monthlyBillsCommitment + monthlySubscriptionCost + thisMonthFuelExpense;
+    monthlyDebtCommitment + monthlyBillsCommitment + monthlySubscriptionCost + thisMonthFuelExpense +
+    data.expenses.filter(e => e.date.startsWith(currentMonthPrefix)).reduce((sum, e) => sum + e.amount, 0);
 
   // Vehicle alerts (Road tax & insurance expiration < 60 days)
   const vehicleAlerts = data.vehicles.flatMap((v) => {
@@ -533,3 +534,4 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </div>
   );
 };
+

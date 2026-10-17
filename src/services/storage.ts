@@ -506,6 +506,7 @@ export function loadDatabase(): AppDatabase {
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
+        expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
         debts: parsed.debts || INITIAL_DEBTS,
         bills: parsed.bills || INITIAL_BILLS,
         subscriptions: parsed.subscriptions || INITIAL_SUBSCRIPTIONS,
@@ -519,6 +520,7 @@ export function loadDatabase(): AppDatabase {
     if (rawOld) {
       const parsedOld = JSON.parse(rawOld);
       return {
+        expenses: [],
         debts: parsedOld.debts || INITIAL_DEBTS,
         bills: INITIAL_BILLS,
         subscriptions: parsedOld.subscriptions || INITIAL_SUBSCRIPTIONS,
@@ -532,6 +534,7 @@ export function loadDatabase(): AppDatabase {
   }
 
   const defaultDb: AppDatabase = {
+    expenses: [],
     debts: INITIAL_DEBTS,
     bills: INITIAL_BILLS,
     subscriptions: INITIAL_SUBSCRIPTIONS,
@@ -590,6 +593,7 @@ export function parseAndValidateBackup(jsonString: string): AppDatabase {
     throw new Error('Fail tidak mengandungi data modul KewanganKu yang betul.');
   }
   return {
+    expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
     debts: parsed.debts || [],
     bills: parsed.bills || INITIAL_BILLS,
     subscriptions: parsed.subscriptions || [],
@@ -598,3 +602,4 @@ export function parseAndValidateBackup(jsonString: string): AppDatabase {
     profile: parsed.profile || INITIAL_USER_PROFILE,
   };
 }
+

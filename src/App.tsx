@@ -5,12 +5,15 @@ import {
   loadDatabase,
   saveDatabase,
   INITIAL_DEBTS,
+  INITIAL_BILLS,
   INITIAL_SUBSCRIPTIONS,
   INITIAL_VEHICLES,
   INITIAL_FUEL_LOGS,
   INITIAL_USER_PROFILE,
   daysUntil,
 } from './services/storage';
+import { VoiceInput } from './components/VoiceInput';
+import { ExpenseHistory } from './components/ExpenseHistory';
 import { Navbar } from './components/Navbar';
 import { BottomNavigation } from './components/BottomNavigation';
 import { DashboardScreen } from './components/DashboardScreen';
@@ -24,6 +27,7 @@ import { SettingsScreen } from './components/SettingsScreen';
 
 const TAB_INDEX_MAP: Record<TabType, number> = {
   dashboard: 0,
+  bills: 8,
   debt: 1,
   subscription: 2,
   ocr: 3,
@@ -106,8 +110,8 @@ export default function App() {
   };
 
   // Navigate to OCR with specific target module
-  const handleOpenOcrWithModule = (moduleHint: 'debt' | 'subscription' | 'fuel') => {
-    setOcrModuleHint(moduleHint);
+  const handleOpenOcrWithModule = (moduleHint: 'debt' | 'subscription' | 'fuel' | 'bill') => {
+    setOcrModuleHint(moduleHint === 'bill' ? 'auto' : moduleHint);
     handleTabChange('ocr');
   };
 
@@ -265,15 +269,15 @@ export default function App() {
       .filter((l) => l.vehicleId === newLog.vehicleId)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    let distanceTrip = 480; // sensible default
+    let distanceTrip: number | undefined;
     if (pastLogs.length > 0 && newLog.odometer > pastLogs[0].odometer) {
       distanceTrip = newLog.odometer - pastLogs[0].odometer;
     }
 
     const efficiency =
-      newLog.litres > 0 ? parseFloat((distanceTrip / newLog.litres).toFixed(2)) : 15.5;
+      distanceTrip && newLog.litres > 0 ? parseFloat((distanceTrip / newLog.litres).toFixed(2)) : undefined;
     const costPerKm =
-      distanceTrip > 0 ? parseFloat((newLog.amount / distanceTrip).toFixed(3)) : 0.132;
+      distanceTrip ? parseFloat((newLog.amount / distanceTrip).toFixed(3)) : undefined;
 
     const logItem: FuelLogItem = {
       ...newLog,
@@ -294,7 +298,7 @@ export default function App() {
       ),
     }));
 
-    showToast(`Log minyak ditambah! Kecekapan: ${efficiency} km/L`);
+    showToast(efficiency ? `Log minyak ditambah! Kecekapan: ${efficiency} km/L` : 'Log minyak ditambah. Kecekapan tersedia selepas bacaan perjalanan yang sah.');
   };
 
   // 5. OCR Scanner auto-save hooks
@@ -409,6 +413,14 @@ export default function App() {
 
       {/* Main Content Area with Smooth Page Slide Transitions */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 pt-5 pb-16 overflow-x-hidden">
+        <VoiceInput vehicles={data.vehicles} screen={currentTab}
+          onSaveFuel={handleAddFuelLog}
+          onSaveExpense={(expense) => {
+            setData(prev => ({ ...prev, expenses: [{ ...expense, id: crypto.randomUUID() }, ...prev.expenses] }));
+            showToast('Perbelanjaan berjaya disimpan!');
+          }} />
+        {currentTab === 'dashboard' && <ExpenseHistory expenses={data.expenses}
+          onDelete={id => setData(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== id) }))} />}
         <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={currentTab}
@@ -495,6 +507,8 @@ export default function App() {
                 }}
                 onResetToDefaults={() => {
                   setData({
+                    expenses: [],
+                    bills: INITIAL_BILLS,
                     debts: INITIAL_DEBTS,
                     subscriptions: INITIAL_SUBSCRIPTIONS,
                     vehicles: INITIAL_VEHICLES,
@@ -538,3 +552,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -50,6 +50,11 @@ export function exportAllToCsv(data: AppDatabase): void {
   rows.push([`Emel`, data.profile.email].map(escapeCsvCell).join(','));
   rows.push('');
 
+  rows.push(['--- PERBELANJAAN HARIAN ---'].map(escapeCsvCell).join(','));
+  rows.push(['ID', 'Keterangan', 'Jumlah (RM)', 'Tarikh', 'Sumber'].map(escapeCsvCell).join(','));
+  (data.expenses || []).forEach(e => rows.push([e.id, e.description, e.amount.toFixed(2), e.date, e.source].map(escapeCsvCell).join(',')));
+  rows.push('');
+
   // SECTION 1: RECURRING UTILITY BILLS & JOMPAY
   rows.push(['--- 1. PENGURUSAN BIL UTILITI TETAP & JOMPAY ---'].map(escapeCsvCell).join(','));
   rows.push([
@@ -363,3 +368,4 @@ export function exportDebtsOnlyToCsv(debts: DebtItem[]): void {
 
   triggerCsvDownload(rows.join('\r\n'), `KewanganKu_Senarai_Hutang_${dateStr}.csv`);
 }
+

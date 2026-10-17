@@ -77,9 +77,10 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
   const currentMonthStr = new Date().toISOString().slice(0, 7);
   const currentMonthFuel = data.fuelLogs
     .filter((f) => f.date.startsWith(currentMonthStr))
-    .reduce((sum, f) => sum + f.amount, 0) || 280;
+    .reduce((sum, f) => sum + f.amount, 0);
 
-  const totalMonthlyExpense = monthlyDebt + monthlyBills + monthlySubs + currentMonthFuel;
+  const dailyExpenses = data.expenses.filter(e => e.date.startsWith(currentMonthStr)).reduce((sum, e) => sum + e.amount, 0);
+  const totalMonthlyExpense = monthlyDebt + monthlyBills + monthlySubs + currentMonthFuel + dailyExpenses;
   const netSavings = Math.max(0, currentIncome - totalMonthlyExpense);
 
   // Debt Service Ratio (DSR)
@@ -151,6 +152,7 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
     { name: 'Bil Utiliti', value: Math.round(monthlyBills), color: '#8b5cf6' },
     { name: 'Langganan', value: Math.round(monthlySubs), color: '#14b8a6' },
     { name: 'Bahan Api Minyak', value: Math.round(currentMonthFuel), color: '#38bdf8' },
+    { name: 'Perbelanjaan Harian', value: Math.round(dailyExpenses), color: '#fb7185' },
     { name: 'Lebihan / Simpanan', value: Math.round(netSavings), color: '#10b981' },
   ];
 
@@ -525,3 +527,4 @@ export const AnalysisScreen: React.FC<AnalysisScreenProps> = ({
     </div>
   );
 };
+

@@ -196,7 +196,16 @@ export interface UserProfile {
   lastBackupTimestamp: string | null;
 }
 
+export interface ExpenseItem {
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  source: 'voice' | 'manual';
+}
+
 export interface AppDatabase {
+  expenses: ExpenseItem[];
   debts: DebtItem[];
   bills: RecurringBillItem[];
   subscriptions: SubscriptionItem[];
@@ -204,3 +213,4 @@ export interface AppDatabase {
   fuelLogs: FuelLogItem[];
   profile: UserProfile;
 }
+
