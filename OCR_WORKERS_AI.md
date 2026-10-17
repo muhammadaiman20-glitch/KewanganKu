@@ -14,7 +14,7 @@ Receipts are processed as images, with JPEG/PNG/WebP validation, bounded request
 
 The model returns readable text, the printed total label, date, merchant and optional fuel/subscription/debt fields. The server checks JSON shape, calendar dates, amount evidence and fuel arithmetic. Unknown values stay null; blank receipts fail. AI can still misread a real photo. Users must review and explicitly confirm before saving.
 
-Fuel requires the actual vehicle and odometer; missing litres/grade are not guessed. Debt payments require an explicit existing debt and preserve the receipt transaction date. General purchases and paid bills can be saved as daily expenses. A subscription renewal date must be supplied separately if it is not printed. Records still use browser localStorage and JSON/CSV backups.
+Fuel requires the actual vehicle and odometer; missing litres/grade are not guessed. Debt payments require an explicit existing debt and preserve the receipt transaction date. General purchases and paid bills can be saved as daily expenses. A subscription renewal date must be supplied separately if it is not printed. Records use browser localStorage and automatic Cloudflare D1 sync, with JSON/CSV backups.
 
 `npm run dev` provides local UI development and an explicit 503 for OCR: the Express server does not emulate Workers AI and returns no simulated data. Use the deployed authenticated Pages site for real inference.
 

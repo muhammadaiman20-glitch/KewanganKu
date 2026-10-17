@@ -18,6 +18,8 @@ import {
   CreditCard,
   Repeat,
 } from 'lucide-react';
+import type { SyncStatus } from '../services/cloudSync';
+import { RECOVERY_KEY } from '../services/cloudSync';
 import { AppDatabase, UserProfile } from '../types';
 import { exportBackupJson, parseAndValidateBackup } from '../services/storage';
 import { exportAllToCsv, exportFuelLogsOnlyToCsv, exportDebtsOnlyToCsv } from '../services/csvExport';
@@ -27,7 +29,8 @@ interface SettingsScreenProps {
   database: AppDatabase;
   onUpdateProfile: (profile: UserProfile) => void;
   onRestoreDatabase: (db: AppDatabase) => void;
-  onResetEverything: () => void;
+  onResetEverything: () => Promise<void>;
+  syncStatus: SyncStatus;
   syncing: boolean;
   onTriggerSync: () => void;
 }
@@ -38,15 +41,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onUpdateProfile,
   onRestoreDatabase,
   onResetEverything,
+  syncStatus,
   syncing,
   onTriggerSync,
 }) => {
   const [userName, setUserName] = useState(profile.name);
   const [userEmail, setUserEmail] = useState(profile.email);
   const [userPhone, setUserPhone] = useState(profile.phone);
+  useEffect(() => { setUserName(profile.name); setUserEmail(profile.email); setUserPhone(profile.phone); }, [profile.name, profile.email, profile.phone]);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [resetText, setResetText] = useState('');
   const [resetError, setResetError] = useState('');
   const readerRef = useRef<FileReader | null>(null);
@@ -125,7 +131,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <span>Profil & Tetapan Sandaran</span>
         </h2>
         <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-          Urus profil, eksport sandaran dan tetapkan semula data yang disimpan dalam pelayar ini.
+          Urus profil, penyelarasan automatik antara peranti dan fail sandaran.
         </p>
       </div>
 
@@ -167,7 +173,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               />
             </div>
             <div>
-              <label className="text-xs text-slate-300 font-medium block mb-1">Emel Google</label>
+              <label className="text-xs text-slate-300 font-medium block mb-1">Emel profil</label>
               <input
                 type="email"
                 value={userEmail}
@@ -196,35 +202,32 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </form>
       </div>
 
-      {/* 2. Offline Database & Google Drive Cloud Backup */}
+      {/* 2. Cloud database and local cache */}
       <div className="rounded-3xl bg-slate-900/80 border border-slate-800 p-5 sm:p-6 shadow-xl space-y-4">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <Cloud className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-bold text-white">Sandaran Google Drive & Simpanan Offline</h3>
+            <h3 className="text-sm font-bold text-white">Cloudflare D1 & Salinan Setempat</h3>
           </div>
           <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            Room DB / Offline Diaktifkan
+            Auto Sync
           </span>
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed">
-          Semua data disimpan secara selamat di dalam peranti anda tanpa memerlukan sambungan internet setiap masa. Anda boleh menyelaraskan sandaran ke Google Drive atau memuat turun salinan sandaran manual.
+          Perubahan dimuat naik secara automatik apabila sambungan tersedia. Peranti lain menerima perubahan semasa aplikasi dibuka (semakan setiap 15 saat), apabila fokus kembali atau apabila anda menekan Selaraskan. Log masuk menggunakan akaun yang sama.
         </p>
 
-        {/* Google Drive Status Bar */}
+        {/* Cloud sync status */}
         <div className="p-4 rounded-2xl bg-[#0b1220] border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
               <Cloud className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-xs font-bold text-white">Google Drive Cloud Sync</h4>
+              <h4 className="text-xs font-bold text-white">Penyelarasan Cloudflare D1</h4>
               <p className="text-[11px] text-slate-400">
-                Akaun: <span className="text-slate-200">{profile.email}</span> • Terakhir:{' '}
-                {profile.lastBackupTimestamp
-                  ? new Date(profile.lastBackupTimestamp).toLocaleString('ms-MY')
-                  : 'Baru sahaja'}
+                {syncStatus.message}<br />Terakhir: {syncStatus.updatedAt ? new Date(syncStatus.updatedAt).toLocaleString('ms-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'Belum diselaraskan'}
               </p>
             </div>
           </div>
@@ -392,23 +395,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
       </div>
 
+      {localStorage.getItem(RECOVERY_KEY) && <section className="rounded-xl border border-amber-500/30 p-4 space-y-2"><h3 className="font-semibold">Salinan pemulihan penyelarasan</h3><p className="text-sm text-slate-300">Salinan sebelum konflik atau reset dari peranti lain. Muat turun untuk semakan; jangan import terus sebagai pangkalan data.</p><button type="button" className="min-h-11 underline text-amber-200" onClick={() => {
+        const raw = localStorage.getItem(RECOVERY_KEY); if (!raw) return;
+        const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = 'KewanganKu_Pemulihan_Sync.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}>Muat turun salinan pemulihan</button></section>}
       <section className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-5 space-y-4" aria-labelledby="reset-heading">
         <div className="flex items-center gap-2 text-rose-300">
           <Trash2 size={20} aria-hidden="true" /><h3 id="reset-heading" className="font-bold">Tetapkan semula semuanya</h3>
         </div>
         <p className="text-sm text-slate-200">Kosongkan semua perbelanjaan, hutang dan bayaran, bil, langganan, kenderaan, servis, log minyak serta profil dan pendapatan. Aplikasi akan bermula dengan rekod kosong.</p>
-        <p className="text-xs text-slate-300">Melibatkan data KewanganKu pada pelayar ini sahaja. Fail sandaran yang dimuat turun dan log masuk Cloudflare kekal.</p>
-        {!resetOpen ? <button ref={resetTrigger} type="button" onClick={() => { setResetText(''); setResetError(''); setResetOpen(true); }} className="min-h-11 rounded-xl bg-rose-500/20 border border-rose-400/50 px-4 py-2 text-sm font-bold text-rose-200 focus-visible:outline-2 focus-visible:outline-rose-200">Reset Everything</button> : <form className="space-y-4 border-t border-rose-500/30 pt-4" onSubmit={event => {
-          event.preventDefault(); if (resetText !== 'RESET') return;
-          try { onResetEverything(); }
-          catch { setResetError('Data tidak dapat dikosongkan kerana simpanan pelayar tidak tersedia. Tiada pengesahan berjaya dibuat. Cuba lagi.'); }
+        <p className="text-xs text-slate-300">Reset ini mengosongkan data awan untuk semua peranti yang menggunakan akaun ini. Internet diperlukan. Fail sandaran yang dimuat turun dan log masuk Cloudflare kekal.</p>
+        {!resetOpen ? <button ref={resetTrigger} type="button" onClick={() => { setResetText(''); setResetError(''); setResetOpen(true); }} className="min-h-11 rounded-xl bg-rose-500/20 border border-rose-400/50 px-4 py-2 text-sm font-bold text-rose-200 focus-visible:outline-2 focus-visible:outline-rose-200">Reset Everything</button> : <form className="space-y-4 border-t border-rose-500/30 pt-4" onSubmit={async event => {
+          event.preventDefault(); if (resetting || resetText !== 'RESET') return;
+          if (readerRef.current?.readyState === FileReader.LOADING) readerRef.current.abort();
+          setResetting(true);
+          try { await onResetEverything(); }
+          catch { setResetError('Tetapan semula awan belum berjaya. Semak sambungan internet atau log masuk semula, kemudian cuba lagi.'); }
+          finally { setResetting(false); }
         }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setResetOpen(false); requestAnimationFrame(() => resetTrigger.current?.focus()); } }}>
           <p className="text-sm font-semibold text-rose-200">Tindakan ini tidak boleh dibatalkan tanpa fail sandaran. Muat turun sandaran dahulu jika diperlukan.</p>
           <button type="button" onClick={handleExportData} className="min-h-11 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white inline-flex gap-2 items-center"><Download size={18} aria-hidden="true" />Muat turun sandaran JSON</button>
           <label className="block text-sm text-slate-200">Taip RESET untuk mengesahkan<input ref={confirmInput} required value={resetText} onChange={event => { setResetText(event.target.value); setResetError(''); }} autoComplete="off" spellCheck={false} className="mt-2 block w-full min-h-11 rounded-xl border border-rose-400/50 bg-slate-950 px-3 py-2 text-white focus-visible:outline-2 focus-visible:outline-rose-200" /></label>
           {resetError && <p role="alert" className="text-sm text-rose-200">{resetError}</p>}
           <div className="flex flex-wrap gap-3">
-            <button type="submit" disabled={resetText !== 'RESET'} className="min-h-11 rounded-xl bg-rose-300 px-4 py-2 text-sm font-bold text-rose-950 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-white">Padam semua data</button>
+            <button type="submit" disabled={resetting || resetText !== 'RESET'} className="min-h-11 rounded-xl bg-rose-300 px-4 py-2 text-sm font-bold text-rose-950 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-white">{resetting ? 'Mengosongkan awan…' : 'Padam semua data'}</button>
             <button type="button" onClick={() => { setResetOpen(false); setResetText(''); requestAnimationFrame(() => resetTrigger.current?.focus()); }} className="min-h-11 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white">Batal</button>
           </div>
         </form>}

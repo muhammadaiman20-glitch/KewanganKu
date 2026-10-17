@@ -77,10 +77,64 @@ export async function authorized(request, env) {
     return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, decodeJwt(parts[2]), new TextEncoder().encode(parts[0] + '.' + parts[1]));
   } catch { return false; }
 }
+const COLLECTIONS = ['expenses', 'debts', 'bills', 'subscriptions', 'vehicles', 'fuelLogs'];
+export function validateDatabase(value) {
+  if (!value || typeof value !== 'object' || !value.profile || typeof value.profile !== 'object') throw new Error('INVALID_DATA');
+  for (const key of COLLECTIONS) {
+    if (!Array.isArray(value[key]) || value[key].length > 10000) throw new Error('INVALID_DATA');
+    const ids = new Set();
+    for (const row of value[key]) {
+      if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id || row.id.length > 150 || ids.has(row.id)) throw new Error('INVALID_DATA');
+      ids.add(row.id);
+      const strings = { expenses: ['description', 'date'], debts: ['title', 'creditor', 'status'], bills: ['name', 'provider', 'status', 'cycle', 'dueDate'], subscriptions: ['name', 'status', 'billingCycle', 'renewalDate'], vehicles: ['name', 'plateNumber', 'roadTaxExpiry', 'insuranceExpiry', 'nextServiceDate'], fuelLogs: ['vehicleId', 'vehiclePlate', 'station', 'date', 'fuelType'] };
+      const numbers = { expenses: ['amount'], debts: ['originalAmount', 'remainingBalance', 'monthlyInstallment', 'dueDay', 'interestRate', 'tenureMonthsTotal', 'tenureMonthsRemaining'], bills: ['amount', 'dueDay'], subscriptions: ['amount'], vehicles: ['year', 'currentOdometer', 'nextServiceOdometer', 'serviceIntervalKm'], fuelLogs: ['amount', 'litres', 'pricePerLitre', 'odometer'] };
+      if (strings[key].some(field => typeof row[field] !== 'string') || numbers[key].some(field => !Number.isFinite(row[field]) || row[field] < 0)) throw new Error('INVALID_DATA');
+      const historyKey = key === 'debts' ? 'payments' : key === 'bills' ? 'paymentHistory' : key === 'vehicles' ? 'services' : null;
+      if (historyKey && (!Array.isArray(row[historyKey]) || row[historyKey].some(item => !item || typeof item.id !== 'string'))) throw new Error('INVALID_DATA');
+    }
+  }
+  if (typeof value.profile.name !== 'string' || typeof value.profile.email !== 'string' || typeof value.profile.phone !== 'string' || !Number.isFinite(value.profile.monthlyIncome ?? 0)) throw new Error('INVALID_DATA');
+  const serialized = JSON.stringify(value);
+  if (new TextEncoder().encode(serialized).length > 1000000) throw new Error('TOO_LARGE');
+  return JSON.parse(serialized);
+}
+async function readState(env) {
+  const row = await env.DB.prepare('SELECT document, revision, generation, updated_at FROM account_state WHERE owner = ?').bind(env.OWNER_EMAIL.toLowerCase()).first();
+  return row ? { data: JSON.parse(row.document), revision: row.revision, generation: row.generation, updatedAt: row.updated_at } : { data: null, revision: 0, generation: 0, updatedAt: null };
+}
+async function syncState(request, env) {
+  if (!['GET', 'PUT'].includes(request.method)) return json({ error: 'Method not allowed' }, 405);
+  if (!await authorized(request, env)) return json({ error: 'Sesi tamat. Muat semula laman dan log masuk semula.' }, 401);
+  if (!env.DB) return json({ error: 'Penyelarasan awan belum tersedia.' }, 503);
+  const origin = request.headers.get('origin');
+  if (origin && origin !== new URL(request.url).origin) return json({ error: 'Asal permintaan tidak dibenarkan.' }, 403);
+  try {
+    if (request.method === 'GET') return json(await readState(env));
+    if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: 'Gunakan JSON.' }, 415);
+    const body = await limitedBody(request);
+    if (!Number.isSafeInteger(body.revision) || body.revision < 0 || !Number.isSafeInteger(body.generation) || body.generation < 0 || typeof body.reset !== 'boolean') throw new Error('INVALID_DATA');
+    const data = validateDatabase(body.data);
+    if (body.reset && (COLLECTIONS.some(key => data[key].length) || data.profile.email || data.profile.phone || data.profile.monthlyIncome)) throw new Error('INVALID_DATA');
+    const current = await readState(env);
+    if (current.revision !== body.revision || current.generation !== body.generation) return json({ ...current, error: 'Versi awan telah berubah.' }, 409);
+    const now = new Date().toISOString();
+    const result = await env.DB.prepare(`INSERT INTO account_state (owner, document, revision, generation, updated_at) VALUES (?, ?, 1, ?, ?)
+      ON CONFLICT(owner) DO UPDATE SET document = excluded.document, revision = account_state.revision + 1, generation = excluded.generation, updated_at = excluded.updated_at
+      WHERE account_state.revision = ? AND account_state.generation = ?`).bind(env.OWNER_EMAIL.toLowerCase(), JSON.stringify(data), current.generation + (body.reset ? 1 : 0), now, body.revision, body.generation).run();
+    if (!result.meta?.changes) return json({ ...await readState(env), error: 'Versi awan telah berubah.' }, 409);
+    return json({ data, revision: current.revision + 1, generation: current.generation + (body.reset ? 1 : 0), updatedAt: now });
+  } catch (error) {
+    if (error?.message === 'INVALID_DATA') return json({ error: 'Struktur rekod tidak sah. Data setempat dikekalkan.' }, 400);
+    if (error?.message === 'TOO_LARGE') return json({ error: 'Rekod melebihi had penyelarasan 1 MB. Eksport sandaran sebelum mengurangkan data.' }, 413);
+    console.error(JSON.stringify({ event: 'sync_failed', name: error?.name || 'Error' }));
+    return json({ error: 'Penyelarasan gagal. Data setempat dikekalkan; cuba lagi.' }, 503);
+  }
+}
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/api/health') return json({ status: 'ok', hosting: 'cloudflare-pages', receiptOcrConfigured: !!env.AI, model: OCR_MODEL });
+    if (url.pathname === '/api/state') return syncState(request, env);
+    if (url.pathname === '/api/health') return json({ status: 'ok', hosting: 'cloudflare-pages', cloudSyncConfigured: !!env.DB, receiptOcrConfigured: !!env.AI, model: OCR_MODEL });
     if (url.pathname === '/api/scan-receipt') {
       if (request.method !== 'POST') return json({ error: 'Gunakan POST untuk mengimbas resit.' }, 405);
       if (!await authorized(request, env)) return json({ error: 'Sesi tamat atau tidak dibenarkan. Log masuk semula sebelum mengimbas.' }, 401);

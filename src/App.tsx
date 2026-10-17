@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { AnimatePresence, motion, Variants } from 'framer-motion';
 import { AppDatabase, DebtItem, FuelLogItem, SubscriptionItem, TabType, UserProfile, VehicleItem, VehicleServiceLog } from './types';
 import {
   loadDatabase,
-  resetDatabase,
-  saveDatabase,
   daysUntil,
 } from './services/storage';
 import { VoiceInput } from './components/VoiceInput';
 import { ExpenseHistory } from './components/ExpenseHistory';
+import { useCloudSync } from './hooks/useCloudSync';
 import { Navbar } from './components/Navbar';
 import { RecurringBillsScreen } from './components/RecurringBillsScreen';
 import { BottomNavigation } from './components/BottomNavigation';
@@ -62,14 +61,13 @@ const pageVariants: Variants = {
 };
 
 export default function App() {
-  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [resetGeneration, setResetGeneration] = useState(0);
-  useEffect(() => () => { if (syncTimer.current) clearTimeout(syncTimer.current); }, []);
   const [data, setData] = useState<AppDatabase>(() => loadDatabase());
   const [currentTab, setCurrentTab] = useState<TabType>('dashboard');
   const [direction, setDirection] = useState<number>(0);
   const [ocrModuleHint, setOcrModuleHint] = useState<'debt' | 'subscription' | 'fuel' | 'auto'>('auto');
-  const [syncing, setSyncing] = useState<boolean>(false);
+  const cloud = useCloudSync(data, setData);
+  const syncing = cloud.status.phase === 'syncing' || cloud.status.phase === 'starting';
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const handleTabChange = (nextTab: TabType) => {
@@ -80,11 +78,6 @@ export default function App() {
     setCurrentTab(nextTab);
   };
 
-  // Sync to localStorage on every change
-  useEffect(() => {
-    saveDatabase(data);
-  }, [data]);
-
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -92,22 +85,7 @@ export default function App() {
     }, 3500);
   };
 
-  // Google Drive cloud sync simulation
-  const handleTriggerSync = () => {
-    setSyncing(true);
-    if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      setData((prev) => ({
-        ...prev,
-        profile: {
-          ...prev.profile,
-          lastBackupTimestamp: new Date().toISOString(),
-        },
-      }));
-      setSyncing(false);
-      showToast('Penyelarasan ke Google Drive berjaya!');
-    }, 1400);
-  };
+  const handleTriggerSync = () => { void cloud.syncNow(); };
 
   // Navigate to OCR with specific target module
   const handleOpenOcrWithModule = (moduleHint: 'debt' | 'subscription' | 'fuel' | 'bill') => {
@@ -376,12 +354,23 @@ export default function App() {
           handleTabChange('ocr');
         }}
         syncing={syncing}
+        syncStatus={cloud.status}
         onTriggerSync={handleTriggerSync}
         urgentAlertCount={urgentVehicleAlerts + urgentDebtsCount}
       />
 
       {/* Main Content Area with Smooth Page Slide Transitions */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 pt-5 pb-[calc(var(--navigation-height)+var(--navigation-inset)+24px)] overflow-x-hidden">
+        <section aria-label="Status penyelarasan" className="mb-4 rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm">
+          <p role="status" className={cloud.status.phase === 'synced' ? 'text-emerald-300' : 'text-amber-200'}>{cloud.status.message}</p>
+          {cloud.status.updatedAt && <p className="mt-1 text-xs text-slate-300">Terakhir: {new Date(cloud.status.updatedAt).toLocaleString('ms-MY', { timeZone: 'Asia/Kuala_Lumpur' })}</p>}
+          {cloud.status.phase === 'conflict' && <div className="mt-3 space-y-3">
+            <p className="text-slate-200">Kedua-dua peranti menukar medan yang sama. Salinan pemulihan disimpan sebelum anda memilih.</p>
+            <div className="overflow-x-auto"><table className="w-full text-left text-xs text-slate-200"><thead><tr><th className="p-2">Rekod / medan</th><th className="p-2">Peranti ini</th><th className="p-2">Awan</th></tr></thead><tbody>{cloud.status.details.slice(0, 20).map((item, index) => <tr key={index} className="border-t border-slate-700"><td className="p-2 align-top">{item.label}</td><td className="p-2 align-top break-words max-w-56">{item.local}</td><td className="p-2 align-top break-words max-w-56">{item.cloud}</td></tr>)}</tbody></table></div>
+            <div className="flex flex-wrap gap-2"><button type="button" className="min-h-11 rounded-lg bg-slate-700 px-3" onClick={() => void cloud.resolve('cloud')}>Guna medan versi awan</button><button type="button" className="min-h-11 rounded-lg bg-emerald-400 px-3 font-semibold text-slate-950" onClick={() => void cloud.resolve('local')}>Guna medan versi peranti ini</button></div>
+          </div>}
+          {(cloud.status.phase === 'error' || cloud.status.phase === 'offline') && <button type="button" onClick={handleTriggerSync} className="mt-2 min-h-11 underline text-emerald-300">Cuba selaraskan semula</button>}
+        </section>
         <VoiceInput key={resetGeneration} vehicles={data.vehicles} screen={currentTab}
           onSaveFuel={handleAddFuelLog}
           onSaveExpense={(expense) => {
@@ -487,15 +476,13 @@ export default function App() {
                   setData(newDb);
                   showToast('Pangkalan data berjaya dipulihkan!');
                 }}
-                onResetEverything={() => {
-                  const empty = resetDatabase();
-                  if (syncTimer.current) clearTimeout(syncTimer.current);
-                  syncTimer.current = null;
-                  setSyncing(false);
-                  setData(empty);
+                onResetEverything={async () => {
+                  await cloud.resetAll();
+                  localStorage.removeItem('kewanganku_app_data_v1');
                   setResetGeneration(value => value + 1);
-                  showToast('Semua rekod dan profil pada pelayar ini telah dikosongkan.');
+                  showToast('Semua rekod dan profil awan telah dikosongkan.');
                 }}
+                syncStatus={cloud.status}
                 syncing={syncing}
                 onTriggerSync={handleTriggerSync}
               />

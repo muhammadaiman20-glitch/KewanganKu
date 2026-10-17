@@ -1,3 +1,4 @@
+import type { SyncStatus } from '../services/cloudSync';
 import React from 'react';
 import { ShieldCheck, Cloud, RefreshCw, Sparkles, Bell, Activity } from 'lucide-react';
 import { UserProfile } from '../types';
@@ -8,6 +9,7 @@ interface NavbarProps {
   onOpenOcr: () => void;
   onOpenAnalysis?: () => void;
   syncing: boolean;
+  syncStatus: SyncStatus;
   onTriggerSync: () => void;
   urgentAlertCount: number;
 }
@@ -18,6 +20,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenOcr,
   onOpenAnalysis,
   syncing,
+  syncStatus,
   onTriggerSync,
   urgentAlertCount,
 }) => {
@@ -51,15 +54,15 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Google Drive Sync status button */}
+          {/* Cloud sync status button */}
           <button
             onClick={onTriggerSync}
             disabled={syncing}
-            title={profile.googleDriveConnected ? 'Google Drive Sandaran Aktif' : 'Sambung Google Drive'}
+            title={syncStatus.message}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:border-slate-700 transition"
           >
-            <Cloud className={`w-3.5 h-3.5 ${profile.googleDriveConnected ? 'text-emerald-400' : 'text-slate-500'}`} />
-            <span className="hidden sm:inline">Drive</span>
+            <Cloud className={`w-3.5 h-3.5 ${syncStatus.phase === 'synced' ? 'text-emerald-400' : 'text-amber-300'}`} />
+            <span className="hidden sm:inline">Cloud</span>
             <RefreshCw className={`w-3 h-3 text-slate-400 ${syncing ? 'animate-spin text-emerald-400' : ''}`} />
           </button>
 
@@ -115,3 +118,4 @@ export const Navbar: React.FC<NavbarProps> = ({
     </header>
   );
 };
+

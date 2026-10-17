@@ -9,7 +9,7 @@ Contoh:
 
 Pilih kenderaan dan lengkapkan jumlah, liter, jenis minyak, stesen serta odometer sebelum menyimpan log minyak. Medan yang tidak disebut kekal kosong. Jumlah wang memerlukan penanda RM/ringgit; nombor lain tidak dianggap wang. Jika pengecaman menghasilkan perkataan nombor, betulkan kepada digit pada borang semakan. Tarikh lalai ialah tarikh tempatan hari ini dan boleh diubah.
 
-Perbelanjaan muncul dalam senarai dashboard dan jumlah bulanan dashboard/analisis; termasuk dalam backup JSON dan CSV lengkap. Rekod masih disimpan dalam localStorage pelayar sedia ada, bukan pangkalan data awan. Memadam data pelayar boleh memadam rekod. Gunakan sandaran JSON.
+Perbelanjaan muncul dalam senarai dashboard dan jumlah bulanan dashboard/analisis; termasuk dalam backup JSON dan CSV lengkap. Rekod disimpan dalam pelayar dan diselaraskan secara automatik ke Cloudflare D1 selepas log masuk. Tunggu status diselaraskan sebelum menukar peranti. Gunakan sandaran JSON untuk salinan berasingan.
 
 Pengecaman menggunakan Web Speech API bahasa `ms-MY`, bergantung pada sokongan pelayar dan perkhidmatan pengecaman. Sesetengah pelayar menghantar audio kepada perkhidmatan mereka; internet mungkin diperlukan. Buka melalui HTTPS atau localhost. Jika tidak disokong, mikrofon ditolak atau rangkaian gagal, arahan boleh ditaip. Tiada kunci Gemini diperlukan untuk ciri ini.
 

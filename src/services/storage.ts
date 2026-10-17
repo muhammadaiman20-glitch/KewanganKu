@@ -533,15 +533,7 @@ export function loadDatabase(): AppDatabase {
     console.warn('Failed to load storage, using initial mock database', e);
   }
 
-  const defaultDb: AppDatabase = {
-    expenses: [],
-    debts: INITIAL_DEBTS,
-    bills: INITIAL_BILLS,
-    subscriptions: INITIAL_SUBSCRIPTIONS,
-    vehicles: INITIAL_VEHICLES,
-    fuelLogs: INITIAL_FUEL_LOGS,
-    profile: INITIAL_USER_PROFILE,
-  };
+  const defaultDb = createEmptyDatabase();
   saveDatabase(defaultDb);
   return defaultDb;
 }
