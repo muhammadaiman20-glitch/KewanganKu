@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // Deployed over the earlier TechDesk worker so it keeps its Telegram token/secrets.
+  "name": "techdesk-ai",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+  "observability": { "enabled": true },
+
+  "ai": { "binding": "AI" },
+
+  "d1_databases": [
+    // Tech issues, notes, chat memory, pending confirmations (schema.sql).
+    { "binding": "DB", "database_name": "techdesk-bot", "database_id": "e2de0ba4-5967-4790-ad25-7ce5769d1cb7" },
+    // The KewanganKu app's synced finance records (same DB the Pages site uses). Only account_state is read/written.
+    { "binding": "FIN_DB", "database_name": "kewanganku-sync", "database_id": "e2a77376-2e7f-42e7-aee0-981a10d640ee" }
+  ]
+
+  // Secrets (npx wrangler secret put <NAME>):
+  //   TELEGRAM_TOKEN  - from @BotFather
+  //   WEBHOOK_SECRET  - long random string (letters, digits, _ and - only)
+  //   OWNER_ID        - comma-separated Telegram user ids allowed to use the bot (message the bot to learn yours)
+  //   OWNER_EMAIL     - the same owner email the Pages site uses (selects your row in account_state)
+}
