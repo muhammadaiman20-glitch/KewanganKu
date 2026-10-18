@@ -17,7 +17,7 @@ export const SPECS = {
   expenses: {
     label: 'expense', id: () => crypto.randomUUID(),
     fields: { description: F('str', { req: true, max: 200 }), amount: F('num', { req: true }), date: F('date', { def: () => todayMY() }) },
-    fixed: () => ({ source: 'manual' }),
+    fixed: () => ({ source: 'manual', floating: true }),
     line: (r) => `${r.date} · ${rm(r.amount)} · ${r.description}`,
   },
   debts: {
@@ -82,6 +82,7 @@ export const SPECS = {
       amount: F('num', { req: true }), litres: F('num', { req: true }), pricePerLitre: F('num', { req: true }),
       odometer: F('int', { req: true }), notes: F('str', { max: 1000 }),
     },
+    fixed: () => ({ floating: true }),
     line: (r) => `${r.date} · ${r.vehiclePlate} · ${r.station} ${r.fuelType} · ${rm(r.amount)} · ${r.litres} L · ${r.odometer} km`,
   },
 };
@@ -209,6 +210,12 @@ export function summary(db, today = todayMY()) {
       soon(v.nextServiceDate, 30) || v.currentOdometer >= v.nextServiceOdometer ? `${v.plateNumber} service due ${v.nextServiceDate} / ${v.nextServiceOdometer} km` : null,
     ].filter(Boolean)),
     monthlyIncome: db.profile?.monthlyIncome || 0,
+    proofThisMonth: (() => {
+      const txns = transactions(db).filter((x) => x.date?.startsWith(month));
+      const fl = txns.filter((x) => isFloating(x.t));
+      return { realised: r2(txns.reduce((a, x) => a + (isFloating(x.t) ? 0 : x.amount), 0)), floating: r2(fl.reduce((a, x) => a + x.amount, 0)), floatingCount: fl.length };
+    })(),
+    floatingAllTime: floatingList(db).length,
   };
 }
 const addDays = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
@@ -243,12 +250,52 @@ export function get(db, args) {
 
 // ---------- write planning (validated now, applied on confirm) ----------
 // Each plan returns { action, preview } — action is stored in D1 and replayed by apply() after the owner taps confirm.
+// ---------- proof of payment ----------
+// Transactions (money that actually moved): expenses, fuel logs, debt and bill payments, vehicle services.
+// A new one is floating:true until a receipt is attached (receiptUrl). Records from before this rule have no
+// floating flag and count as realised.
+const TXN_COLLECTIONS = ['expenses', 'fuelLogs'];
+const withProof = (t, proof) => { if (proof) { t.receiptUrl = proof; delete t.floating; } return t; };
+const statusOf = (t) => (t.floating === true ? '\n⏳ Terapung — hantar gambar resit/slip untuk realisasikan' : t.receiptUrl ? '\n🧾 Direalisasikan (bukti dilampirkan)' : '');
+export const isFloating = (t) => t?.floating === true;
+
+// Where a confirmed action's transaction lives, so a receipt can be attached to it later. null = not a transaction.
+export function refOf(a) {
+  if (a.op === 'add' && TXN_COLLECTIONS.includes(a.c)) return { c: a.c, id: a.record.id };
+  if (a.op === 'pay') return { c: a.c, id: a.id, sub: a.payment.id };
+  return null;
+}
+
+// Every transaction with its ref, newest first.
+export function transactions(db) {
+  const out = [];
+  for (const e of db.expenses || []) out.push({ ref: { c: 'expenses', id: e.id }, t: e, date: e.date, amount: e.amount, label: e.description });
+  for (const f of db.fuelLogs || []) out.push({ ref: { c: 'fuelLogs', id: f.id }, t: f, date: f.date, amount: f.amount, label: `Minyak ${f.vehiclePlate} ${f.station}` });
+  for (const d of db.debts || []) for (const p of d.payments || []) out.push({ ref: { c: 'debts', id: d.id, sub: p.id }, t: p, date: p.date, amount: p.amount, label: `Bayaran ${d.title}` });
+  for (const b of db.bills || []) for (const p of b.paymentHistory || []) out.push({ ref: { c: 'bills', id: b.id, sub: p.id }, t: p, date: p.paidDate, amount: p.amount, label: `Bayaran ${b.name}` });
+  for (const v of db.vehicles || []) for (const s of v.services || []) out.push({ ref: { c: 'vehicles', id: v.id, sub: s.id }, t: s, date: s.date, amount: s.cost, label: `Servis ${v.plateNumber} ${s.workshop || ''}`.trim() });
+  return out.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+export const floatingList = (db) => transactions(db).filter((x) => isFloating(x.t));
+
+// Attach a stored proof to one transaction (inside commit). Returns a short result line.
+export function attachProof(db, ref, url) {
+  const x = transactions(db).find((y) => y.ref.c === ref.c && y.ref.id === ref.id && (y.ref.sub ?? null) === (ref.sub ?? null));
+  if (!x) throw new Error('that transaction no longer exists (deleted in the app?); the receipt was not attached');
+  withProof(x.t, url);
+  return `🧾 Direalisasikan: ${x.label} · ${rm(x.amount)} · ${x.date}`;
+}
+
+const proofNote =(proof) => (proof ? '\n🧾 Bukti dilampirkan — akan direalisasikan' : '\n⏳ Tiada bukti — disimpan sebagai Terapung sehingga resit dihantar');
+
 export function planAdd(db, args) {
   const c = collectionOf(args.collection);
   const built = buildRecord(c, args.record || {}, db);
   if (built.error) return built;
   const record = c === 'fuelLogs' ? withFuelMath(db, built.record) : built.record;
-  return { action: { op: 'add', c, record }, preview: `➕ Add ${SPECS[c].label}\n${SPECS[c].line(record)}` };
+  const txn = TXN_COLLECTIONS.includes(c);
+  const proof = txn && args.proof ? args.proof : undefined;
+  return { action: { op: 'add', c, record, ...(proof ? { proof } : {}) }, preview: `➕ Add ${SPECS[c].label}\n${SPECS[c].line(record)}${txn ? proofNote(proof) : ''}` };
 }
 
 export function planUpdate(db, args) {
@@ -285,9 +332,10 @@ export function planPayment(db, args) {
   if (!amount) return { error: 'amount is required and must be more than 0' };
   const date = coerce('date', F('date'), args.date) || todayMY();
   if (c === 'debts' && row.status !== 'active') return { error: `debt "${row.title}" is already paid off` };
-  const payment = { amount, date, referenceNo: clip(args.referenceNo, 60) || undefined, notes: clip(args.notes, 500) || undefined };
+  // The payment id is fixed now (not on confirm) so the bot can attach a receipt to it afterwards.
+  const payment = { id: c === 'debts' ? `pay-${Date.now()}` : crypto.randomUUID(), amount, date, referenceNo: clip(args.referenceNo, 60) || undefined, notes: clip(args.notes, 500) || undefined };
   const after = c === 'debts' ? `\nbaki ${rm(row.remainingBalance)} → ${rm(Math.max(0, row.remainingBalance - amount))}` : `\nstatus ${row.status} → paid`;
-  return { action: { op: 'pay', c, id: row.id, payment }, preview: `💸 Record payment ${rm(amount)} on ${date}\n${SPECS[c].line(row)}${after}` };
+  return { action: { op: 'pay', c, id: row.id, payment, ...(args.proof ? { proof: args.proof } : {}) }, preview: `💸 Record payment ${rm(amount)} on ${date}\n${SPECS[c].line(row)}${after}${proofNote(args.proof)}` };
 }
 const fmt = (v) => (v === null || v === undefined ? '(empty)' : typeof v === 'number' ? String(v) : `"${v}"`);
 
@@ -297,14 +345,15 @@ export function apply(db, a) {
   const list = db[a.c];
   if (a.op === 'add') {
     if (list.some((r) => r.id === a.record.id)) return `Already saved: ${spec.line(a.record)}`;
+    const record = withProof({ ...a.record }, a.proof);
     if (a.c === 'fuelLogs') {
-      const car = db.vehicles.find((v) => v.id === a.record.vehicleId);
+      const car = db.vehicles.find((v) => v.id === record.vehicleId);
       if (!car) throw new Error('that vehicle was deleted in the app; fuel log not saved');
-      if (a.record.odometer > car.currentOdometer) car.currentOdometer = a.record.odometer;
-      list.unshift(a.record);
-    } else if (a.c === 'vehicles') list.push(a.record);
-    else list.unshift(a.record);
-    return `✅ Saved ${spec.label}: ${spec.line(a.record)}`;
+      if (record.odometer > car.currentOdometer) car.currentOdometer = record.odometer;
+      list.unshift(record);
+    } else if (a.c === 'vehicles') list.push(record);
+    else list.unshift(record);
+    return `✅ Saved ${spec.label}: ${spec.line(record)}${statusOf(record)}`;
   }
   const idx = list.findIndex((r) => r.id === a.id);
   if (idx < 0) throw new Error(`${spec.label} no longer exists (deleted in the app?) — nothing changed`);
@@ -317,18 +366,23 @@ export function apply(db, a) {
   }
   if (a.op === 'pay') {
     const p = a.payment;
+    const hist = row[spec.history] || [];
+    const pid = p.id || (a.c === 'debts' ? `pay-${Date.now()}` : crypto.randomUUID());
+    if (hist.some((h) => h.id === pid)) return 'Already saved: this payment was recorded before';
     if (a.c === 'debts') {
       if (row.status !== 'active') throw new Error('this debt is already paid off; nothing changed');
       const remaining = r2(Math.max(0, row.remainingBalance - p.amount));
-      row.payments = [{ id: `pay-${Date.now()}`, debtId: row.id, amount: p.amount, date: p.date, referenceNo: p.referenceNo, notes: p.notes }, ...row.payments];
+      const rec = withProof({ id: pid, debtId: row.id, amount: p.amount, date: p.date, referenceNo: p.referenceNo, notes: p.notes, floating: true }, a.proof);
+      row.payments = [rec, ...row.payments];
       row.remainingBalance = remaining;
       row.status = remaining <= 0 ? 'paid_off' : 'active';
       row.tenureMonthsRemaining = Math.max(0, row.tenureMonthsRemaining - 1);
-      return `✅ Payment ${rm(p.amount)} recorded. ${row.title} baki now ${rm(remaining)}${remaining <= 0 ? ' — paid off 🎉' : ''}`;
+      return `✅ Payment ${rm(p.amount)} recorded. ${row.title} baki now ${rm(remaining)}${remaining <= 0 ? ' — paid off 🎉' : ''}${statusOf(rec)}`;
     }
-    row.paymentHistory = [{ id: crypto.randomUUID(), billId: row.id, amount: p.amount, paidDate: p.date, referenceNo: p.referenceNo, notes: p.notes, method: row.paymentMethod }, ...row.paymentHistory];
+    const rec = withProof({ id: pid, billId: row.id, amount: p.amount, paidDate: p.date, referenceNo: p.referenceNo, notes: p.notes, method: row.paymentMethod, floating: true }, a.proof);
+    row.paymentHistory = [rec, ...row.paymentHistory];
     row.status = 'paid';
-    return `✅ Payment ${rm(p.amount)} recorded for ${row.name}; marked paid`;
+    return `✅ Payment ${rm(p.amount)} recorded for ${row.name}; marked paid${statusOf(rec)}`;
   }
   throw new Error(`unknown action ${a.op}`);
 }
@@ -343,7 +397,7 @@ const BUY = /^(beli|belanja|buy|bought|spent|spend)\b/i;
 // Questions, edits and fuel go to the AI: they need more than "description + amount".
 const NOT_QUICK = /[?\n]|\d{1,2}\/\d{1,2}|\b(berapa|how|what|why|kenapa|bila|when|list|senarai|show|tunjuk|semak|padam|delete|buang|remove|ubah|edit|update|tukar|change|batal|cancel|undo|hutang baru|bil baru|langganan|subscription|minyak|petrol|fuel|ron\s?9[57]|diesel|litre|liter)\b/i;
 
-export function quickPlan(db, text, now = Date.now()) {
+export function quickPlan(db, text, now = Date.now(), proof) {
   const t = String(text || '').trim();
   if (!t || t.length > 100 || t.startsWith('/') || NOT_QUICK.test(t)) return null;
   const amounts = [...t.matchAll(AMOUNT)];
@@ -368,10 +422,10 @@ export function quickPlan(db, text, now = Date.now()) {
     ].filter((h) => words.every((w) => h.key.toLowerCase().includes(w)));
     // No unique debt/bill (e.g. "bayar parking RM3"): let the AI decide between a payment and an expense.
     if (hits.length !== 1) return null;
-    return planPayment(db, { collection: hits[0].c, id: hits[0].id, amount, date });
+    return planPayment(db, { collection: hits[0].c, id: hits[0].id, amount, date, proof });
   }
 
   const description = rest.replace(BUY, '').trim();
   if (!description || description.length > 60 || description.split(' ').length > 8 || !/\p{L}/u.test(description)) return null;
-  return planAdd(db, { collection: 'expenses', record: { description: description[0].toUpperCase() + description.slice(1), amount, date } });
+  return planAdd(db, { collection: 'expenses', record: { description: description[0].toUpperCase() + description.slice(1), amount, date }, proof });
 }

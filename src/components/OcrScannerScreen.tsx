@@ -4,6 +4,7 @@ import './ReceiptCamera.css';
 import { DebtItem, ExpenseItem, FuelLogItem, TabType, VehicleItem } from '../types';
 import { SAMPLE_RECEIPTS } from '../services/sampleReceipts';
 import { localDate } from '../services/voiceCommand';
+import { uploadProof } from '../services/proof';
 
 type Extraction = {
   merchantName: string | null; amount: number | null; date: string | null;
@@ -11,11 +12,11 @@ type Extraction = {
   fuelDetails?: { litres: number | null; pricePerLitre: number | null; fuelType: string | null };
   debtDetails?: { referenceNo?: string }; subscriptionDetails?: { nextBillingDate?: string };
 };
-type OcrFuel = { vehicleId: string; vehiclePlate: string; station: string; amount: number; litres: number; pricePerLitre: number; fuelType: FuelLogItem['fuelType']; date: string; odometer: number };
+type OcrFuel = { vehicleId: string; vehiclePlate: string; station: string; amount: number; litres: number; pricePerLitre: number; fuelType: FuelLogItem['fuelType']; date: string; odometer: number; receiptUrl?: string };
 interface OcrScannerScreenProps {
   initialModule?: 'debt' | 'subscription' | 'fuel' | 'auto';
   vehicles: VehicleItem[]; debts: DebtItem[];
-  onSaveToDebt: (data: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string }) => void;
+  onSaveToDebt: (data: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string; receiptUrl?: string }) => void;
   onSaveToSubscription: (data: { name: string; amount: number; renewalDate: string; category?: string }) => void;
   onSaveToFuel: (data: OcrFuel) => void;
   onSaveExpense: (data: Omit<ExpenseItem, 'id'>) => void;
@@ -102,23 +103,30 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
   };
   const capture = () => { const v = video.current; if (!v?.videoWidth) { setNotice('Tunggu sehingga kamera bersedia.'); return; } const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d')?.drawImage(v, 0, 0); void scan(c.toDataURL('image/jpeg', 0.94)); };
   const reset = () => { sequence.current++; pending.current?.abort(); stopCamera(); setBusy(false); setImage(null); setResult(null); setNotice(''); setSaved(false); setReviewed(false); };
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (saving.current || saved || !reviewed) return;
     const total = Number(amount); if (!Number.isFinite(total) || total <= 0 || !merchant.trim() || !date || date > localDate()) { setNotice('Lengkapkan nama, jumlah positif dan tarikh transaksi yang sah.'); return; }
     saving.current = true;
     try {
-      if (category === 'fuel') {
-        const v = vehicles.find(v => v.id === vehicleId); const qty = Number(litres); const odo = Number(odometer);
-        if (!v || !fuelType || !Number.isFinite(qty) || qty <= 0 || !odometer || !Number.isFinite(odo) || odo < v.currentOdometer) throw new Error('Pilih kenderaan, gred minyak, liter dan bacaan odometer sebenar (tidak kurang daripada bacaan semasa).');
-        onSaveToFuel({ vehicleId: v.id, vehiclePlate: v.plateNumber, station: merchant.trim(), amount: total, date, litres: qty, pricePerLitre: Number((total / qty).toFixed(4)), odometer: odo, fuelType: fuelType as FuelLogItem['fuelType'] });
+      const v = vehicles.find(v => v.id === vehicleId); const qty = Number(litres); const odo = Number(odometer);
+      if (category === 'fuel' && (!v || !fuelType || !Number.isFinite(qty) || qty <= 0 || !odometer || !Number.isFinite(odo) || odo < v.currentOdometer)) throw new Error('Pilih kenderaan, gred minyak, liter dan bacaan odometer sebenar (tidak kurang daripada bacaan semasa).');
+      if (category === 'debt' && !debtId) throw new Error('Pilih hutang yang betul sebelum merekodkan bayaran.');
+      if (category === 'subscription' && !renewal) throw new Error('Masukkan tarikh pembaharuan seterusnya. Tarikh resit bukan tarikh pembaharuan.');
+      // The scanned receipt is the proof of payment. If the upload fails the record is still saved, as Terapung.
+      let receiptUrl: string | undefined;
+      if (category !== 'subscription' && image) {
+        setNotice('Memuat naik resit sebagai bukti…');
+        try { receiptUrl = await uploadProof(image); } catch { receiptUrl = undefined; }
+      }
+      if (category === 'fuel' && v) {
+        onSaveToFuel({ vehicleId: v.id, vehiclePlate: v.plateNumber, station: merchant.trim(), amount: total, date, litres: qty, pricePerLitre: Number((total / qty).toFixed(4)), odometer: odo, fuelType: fuelType as FuelLogItem['fuelType'], receiptUrl });
       } else if (category === 'debt') {
-        if (!debtId) throw new Error('Pilih hutang yang betul sebelum merekodkan bayaran.');
-        onSaveToDebt({ debtId, creditor: merchant.trim(), amount: total, date, refNo: result?.debtDetails?.referenceNo, notes: 'Bayaran daripada resit OCR yang disemak.' });
+        onSaveToDebt({ debtId, creditor: merchant.trim(), amount: total, date, refNo: result?.debtDetails?.referenceNo, notes: 'Bayaran daripada resit OCR yang disemak.', receiptUrl });
       } else if (category === 'subscription') {
-        if (!renewal) throw new Error('Masukkan tarikh pembaharuan seterusnya. Tarikh resit bukan tarikh pembaharuan.');
         onSaveToSubscription({ name: merchant.trim(), amount: total, renewalDate: renewal, category: 'other' });
-      } else onSaveExpense({ description: merchant.trim(), amount: total, date, source: 'ocr' });
-      setSaved(true); setNotice('Rekod berjaya disimpan.');
+      } else onSaveExpense({ description: merchant.trim(), amount: total, date, source: 'ocr', receiptUrl });
+      setSaved(true);
+      setNotice(category === 'subscription' || receiptUrl ? 'Rekod berjaya disimpan dengan resit sebagai bukti.' : 'Rekod disimpan sebagai Terapung — resit gagal dimuat naik. Lampirkan semula dari papan pemuka.');
     } catch (e) { setNotice(e instanceof Error ? e.message : 'Rekod tidak dapat disimpan.'); }
     finally { saving.current = false; }
   };

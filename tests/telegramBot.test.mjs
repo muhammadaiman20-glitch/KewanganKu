@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { runTool, resolvePending, think, handleUpdate, toHtml, chunks, quickRecord } from '../telegram-bot/src/worker.js';
 import { buildRecord, summary, todayMY, quickPlan } from '../telegram-bot/src/finance.js';
+import { validateDatabase } from '../public/_worker.js';
 
 // Minimal D1 on node:sqlite (prepare/bind/first/all/run/batch).
 function d1(sqlite) {
@@ -187,4 +188,74 @@ test('Telegram HTML escaping and chunking keep code blocks intact', () => {
   assert.equal(toHtml('**a<b>** `x<y`'), '<b>a&lt;b&gt;</b> <code>x&lt;y</code>');
   const parts = chunks('```\n' + 'line\n'.repeat(1500) + '```', 3500);
   assert.ok(parts.length > 1 && parts.every((p) => (p.match(/```/g) || []).length % 2 === 0));
+});
+
+// ---------- proof of payment ----------
+const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+function telegramMock() {
+  const sent = []; const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes('/file/bot')) return new Response(JPEG);
+    const method = u.split('/').pop();
+    if (method === 'getFile') return Response.json({ ok: true, result: { file_path: 'photos/p.jpg', file_size: JPEG.length } });
+    sent.push([method, JSON.parse(init.body)]); return Response.json({ ok: true });
+  };
+  return { sent, restore: () => { globalThis.fetch = orig; } };
+}
+const photoMsg = (id, caption) => ({ update_id: id, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, photo: [{ file_id: 'small' }, { file_id: 'big' }], ...(caption ? { caption } : {}) } });
+const tapLast = async (env, sent) => { const card = [...sent].reverse().find(([m, b]) => m === 'sendMessage' && b.reply_markup)[1]; return resolvePending(env, 'ok', card.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1], 42); };
+
+test('a confirmed transaction without proof is floating until the next photo is attached as its receipt', async () => {
+  const { env, doc, fin } = setup(); const tgm = telegramMock();
+  try {
+    await handleUpdate(env, { update_id: 20, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'beli nasi lemak RM12.50' } });
+    assert.match(tgm.sent.at(-1)[1].text, /Terapung/);
+    assert.match(await tapLast(env, tgm.sent), /Saved expense[\s\S]*Terapung/);
+    const saved = doc().expenses[0]; assert.equal(saved.floating, true); assert.equal(saved.receiptUrl, undefined);
+    const before = summary(appData()).proofThisMonth.realised;
+    assert.deepEqual(summary(doc()).proofThisMonth, { realised: before, floating: 12.5, floatingCount: 1 });
+    tgm.sent.length = 0; env.AI = { run: async () => { throw new Error('AI must not be called'); } };
+    await handleUpdate(env, photoMsg(21));
+    assert.match(tgm.sent.at(-1)[1].text, /Direalisasikan[\s\S]*Nasi lemak/);
+    const after = doc().expenses[0]; assert.equal(after.floating, undefined); assert.match(after.receiptUrl, /^\/api\/proofs\/[0-9a-f-]{36}$/);
+    const stored = fin.prepare('SELECT owner, mime, data FROM proofs').get();
+    assert.deepEqual([stored.owner, stored.mime, stored.data], ['owner@example.com', 'image/jpeg', Buffer.from(JPEG).toString('base64')]);
+    assert.deepEqual(summary(doc()).proofThisMonth, { realised: before + 12.5, floating: 0, floatingCount: 0 });
+  } finally { tgm.restore(); }
+});
+
+test('a receipt photo with a plain caption is recorded already realised; old records without a flag stay realised', async () => {
+  const { env, doc } = setup(); const tgm = telegramMock();
+  try {
+    env.AI = { run: async () => { throw new Error('AI must not be called'); } };
+    await handleUpdate(env, photoMsg(30, 'bayar PTPTN RM200'));
+    assert.match(tgm.sent.at(-1)[1].text, /Bukti dilampirkan/);
+    assert.match(await tapLast(env, tgm.sent), /Direalisasikan/);
+    const pay = doc().debts[0].payments[0]; assert.equal(pay.floating, undefined); assert.match(pay.receiptUrl, /^\/api\/proofs\//); assert.equal(doc().debts[0].remainingBalance, 100);
+    assert.equal(env.DB.prepare ? (await env.DB.prepare('SELECT count(*) AS n FROM proof_wait').first()).n : 0, 0);
+    assert.equal(summary(doc()).floatingAllTime, 0);
+  } finally { tgm.restore(); }
+});
+
+test('/terapung lists floating transactions and its button picks which one the next photo proves', async () => {
+  const data = appData();
+  data.bills[0].paymentHistory = [{ id: 'bp1', billId: 'b1', amount: 120, paidDate: '2026-10-02', floating: true }];
+  data.expenses.push({ id: 'e2', description: 'roti', amount: 4, date: '2026-10-03', source: 'manual', floating: true });
+  const { env, doc } = setup(data); const tgm = telegramMock();
+  try {
+    await handleUpdate(env, { update_id: 40, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: '/terapung' } });
+    const list = tgm.sent.at(-1)[1];
+    assert.match(list.text, /2 tanpa bukti/); assert.match(list.text, /1\. Roti|1\. roti/); assert.match(list.text, /Bayaran TNB/);
+    const second = list.reply_markup.inline_keyboard[0][1].callback_data.split(':')[1];
+    assert.match(await resolvePending(env, 'ok', second, 42), /Hantar gambar resit[\s\S]*TNB/);
+    await handleUpdate(env, photoMsg(41, 'ni resit'));
+    assert.match(doc().bills[0].paymentHistory[0].receiptUrl, /^\/api\/proofs\//); assert.equal(doc().expenses.find((e) => e.id === 'e2').floating, true);
+    assert.match(tgm.sent.at(-1)[1].text, /1 transaksi lagi tanpa bukti/);
+  } finally { tgm.restore(); }
+});
+
+test('the app sync rejects a malformed proof flag', () => {
+  const data = appData(); data.expenses[0].floating = 'yes';
+  assert.throws(() => validateDatabase(data), /INVALID_DATA/);
 });

@@ -19,6 +19,8 @@ import { FuelScreen } from './components/FuelScreen';
 import { OcrScannerScreen } from './components/OcrScannerScreen';
 import { AnalysisScreen } from './components/AnalysisScreen';
 import { SettingsScreen } from './components/SettingsScreen';
+import { ProofPanel } from './components/ProofPanel';
+import { attachProof, proofFields } from './services/proof';
 
 const TAB_INDEX_MAP: Record<TabType, number> = {
   dashboard: 0,
@@ -108,7 +110,7 @@ export default function App() {
     showToast(`Hutang "${item.title}" berjaya didaftarkan!`);
   };
 
-  const handleRecordDebtPayment = (debtId: string, amount: number, notes?: string, refNo?: string, paymentDate?: string) => {
+  const handleRecordDebtPayment = (debtId: string, amount: number, notes?: string, refNo?: string, paymentDate?: string, receiptUrl?: string) => {
     setData((prev) => {
       const updatedDebts = prev.debts.map((d) => {
         if (d.id === debtId) {
@@ -120,6 +122,7 @@ export default function App() {
             date: paymentDate || new Date().toISOString().split('T')[0],
             referenceNo: refNo,
             notes,
+            ...proofFields(receiptUrl),
           };
           return {
             ...d,
@@ -197,6 +200,7 @@ export default function App() {
         if (v.id === vehId) {
           const srvLog: VehicleServiceLog = {
             ...newService,
+            ...proofFields(newService.receiptUrl),
             id: `srv-${Date.now()}`,
             vehicleId: vehId,
           };
@@ -259,6 +263,7 @@ export default function App() {
 
     const logItem: FuelLogItem = {
       ...newLog,
+      ...proofFields(newLog.receiptUrl),
       id: `fuel-${Date.now()}`,
       distanceTrip,
       efficiencyKmPerLitre: efficiency,
@@ -280,9 +285,9 @@ export default function App() {
   };
 
   // 5. OCR Scanner auto-save hooks
-  const handleOcrSaveToDebt = (ocrData: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string }) => {
+  const handleOcrSaveToDebt = (ocrData: { debtId: string; creditor: string; amount: number; date: string; refNo?: string; notes?: string; receiptUrl?: string }) => {
     if (!data.debts.some(d => d.id === ocrData.debtId && d.status === 'active')) throw new Error('Hutang tidak dijumpai. Pilih hutang yang betul.');
-    handleRecordDebtPayment(ocrData.debtId, ocrData.amount, ocrData.notes, ocrData.refNo, ocrData.date);
+    handleRecordDebtPayment(ocrData.debtId, ocrData.amount, ocrData.notes, ocrData.refNo, ocrData.date, ocrData.receiptUrl);
   };
 
   const handleOcrSaveToSubscription = (ocrData: {
@@ -312,6 +317,7 @@ export default function App() {
     fuelType: 'RON95' | 'RON97' | 'Diesel' | 'RON100';
     date: string;
     odometer: number;
+    receiptUrl?: string;
   }) => {
     const veh = data.vehicles.find((v) => v.id === ocrData.vehicleId);
     if (!veh) throw new Error('Kenderaan tidak dijumpai.');
@@ -326,6 +332,7 @@ export default function App() {
       odometer: ocrData.odometer,
       date: ocrData.date,
       notes: 'Direkodkan secara automatik melalui imbasan AI OCR',
+      receiptUrl: ocrData.receiptUrl,
     });
   };
 
@@ -374,9 +381,13 @@ export default function App() {
         <VoiceInput key={resetGeneration} vehicles={data.vehicles} screen={currentTab}
           onSaveFuel={handleAddFuelLog}
           onSaveExpense={(expense) => {
-            setData(prev => ({ ...prev, expenses: [{ ...expense, id: crypto.randomUUID() }, ...prev.expenses] }));
-            showToast('Perbelanjaan berjaya disimpan!');
+            setData(prev => ({ ...prev, expenses: [{ ...expense, ...proofFields(expense.receiptUrl), id: crypto.randomUUID() }, ...prev.expenses] }));
+            showToast('Perbelanjaan disimpan sebagai Terapung — lampirkan resit untuk realisasikan.');
           }} />
+        {currentTab === 'dashboard' && <ProofPanel data={data} onAttach={(ref, url) => {
+          setData(prev => attachProof(prev, ref, url));
+          showToast('Resit dilampirkan — transaksi direalisasikan!');
+        }} />}
         {currentTab === 'dashboard' && <ExpenseHistory expenses={data.expenses}
           onDelete={id => setData(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== id) }))} />}
         <AnimatePresence mode="wait" custom={direction}>
@@ -402,7 +413,7 @@ export default function App() {
               onAddBill={bill => setData(prev => ({ ...prev, bills: [{ ...bill, id: crypto.randomUUID(), paymentHistory: [], createdAt: new Date().toISOString().split('T')[0] }, ...prev.bills] }))}
               onUpdateBill={bill => setData(prev => ({ ...prev, bills: prev.bills.map(item => item.id === bill.id ? bill : item) }))}
               onDeleteBill={id => setData(prev => ({ ...prev, bills: prev.bills.filter(item => item.id !== id) }))}
-              onRecordPayment={(id, record) => setData(prev => ({ ...prev, bills: prev.bills.map(bill => bill.id === id ? { ...bill, status: 'paid', paymentHistory: [{ ...record, id: crypto.randomUUID(), billId: id }, ...bill.paymentHistory] } : bill) }))}
+              onRecordPayment={(id, record) => setData(prev => ({ ...prev, bills: prev.bills.map(bill => bill.id === id ? { ...bill, status: 'paid', paymentHistory: [{ ...record, ...proofFields(record.receiptUrl), id: crypto.randomUUID(), billId: id }, ...bill.paymentHistory] } : bill) }))}
               onOpenOcrWithModule={handleOpenOcrWithModule}
               onNavigate={handleTabChange}
             />}
@@ -450,7 +461,7 @@ export default function App() {
               <OcrScannerScreen
                 initialModule={ocrModuleHint}
                 debts={data.debts}
-                onSaveExpense={expense => { setData(prev => ({ ...prev, expenses: [{ ...expense, id: crypto.randomUUID() }, ...prev.expenses] })); showToast('Perbelanjaan resit disimpan!'); }}
+                onSaveExpense={expense => { setData(prev => ({ ...prev, expenses: [{ ...expense, ...proofFields(expense.receiptUrl), id: crypto.randomUUID() }, ...prev.expenses] })); showToast(expense.receiptUrl ? 'Perbelanjaan resit disimpan & direalisasikan!' : 'Perbelanjaan disimpan sebagai Terapung — resit gagal dimuat naik.'); }}
                 vehicles={data.vehicles}
                 onSaveToDebt={handleOcrSaveToDebt}
                 onSaveToSubscription={handleOcrSaveToSubscription}

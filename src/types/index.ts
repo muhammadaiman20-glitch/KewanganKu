@@ -15,7 +15,8 @@ export interface DebtPayment {
   amount: number;
   date: string;
   referenceNo?: string;
-  receiptUrl?: string;
+  receiptUrl?: string; // proof of payment: /api/proofs/<id>
+  floating?: boolean; // true = no proof yet, not realised
   notes?: string;
 }
 
@@ -70,7 +71,8 @@ export interface BillPaymentRecord {
   paidDate: string; // YYYY-MM-DD
   referenceNo?: string;
   method?: string;
-  receiptUrl?: string;
+  receiptUrl?: string; // proof of payment: /api/proofs/<id>
+  floating?: boolean; // true = no proof yet, not realised
   notes?: string;
 }
 
@@ -117,7 +119,8 @@ export interface VehicleServiceLog {
   cost: number;
   workshop: string;
   items: string[];
-  receiptUrl?: string;
+  receiptUrl?: string; // proof of payment: /api/proofs/<id>
+  floating?: boolean; // true = no proof yet, not realised
   notes?: string;
 }
 
@@ -151,7 +154,8 @@ export interface FuelLogItem {
   distanceTrip?: number; // km travelled since last fill
   efficiencyKmPerLitre?: number; // km / L
   costPerKm?: number; // RM / km
-  receiptUrl?: string;
+  receiptUrl?: string; // proof of payment: /api/proofs/<id>
+  floating?: boolean; // true = no proof yet, not realised
   notes?: string;
 }
 
@@ -210,6 +214,8 @@ export interface ExpenseItem {
   amount: number;
   date: string;
   source: 'voice' | 'manual' | 'ocr';
+  receiptUrl?: string; // proof of payment: /api/proofs/<id>
+  floating?: boolean; // true = no proof yet, not realised
 }
 
 export interface AppDatabase {

@@ -92,12 +92,46 @@ export function validateDatabase(value) {
       if (['debts', 'bills'].includes(key) && row.bankDetails !== undefined && (!row.bankDetails || typeof row.bankDetails !== 'object' || ['bankName', 'accountNumber', 'accountHolder'].some(field => typeof row.bankDetails[field] !== 'string' || row.bankDetails[field].length > (field === 'accountNumber' ? 50 : 150)))) throw new Error('INVALID_DATA');
       const historyKey = key === 'debts' ? 'payments' : key === 'bills' ? 'paymentHistory' : key === 'vehicles' ? 'services' : null;
       if (historyKey && (!Array.isArray(row[historyKey]) || row[historyKey].some(item => !item || typeof item.id !== 'string'))) throw new Error('INVALID_DATA');
+      // Proof of payment: floating is true until a receipt is attached; receiptUrl points at /api/proofs/<id>.
+      for (const t of [row, ...(historyKey ? row[historyKey] : [])]) if ((t.floating !== undefined && typeof t.floating !== 'boolean') || (t.receiptUrl !== undefined && (typeof t.receiptUrl !== 'string' || t.receiptUrl.length > 300))) throw new Error('INVALID_DATA');
     }
   }
   if (typeof value.profile.name !== 'string' || typeof value.profile.email !== 'string' || typeof value.profile.phone !== 'string' || !Number.isFinite(value.profile.monthlyIncome ?? 0)) throw new Error('INVALID_DATA');
   const serialized = JSON.stringify(value);
   if (new TextEncoder().encode(serialized).length > 1000000) throw new Error('TOO_LARGE');
   return JSON.parse(serialized);
+}
+const PROOF_LIMIT = 1.5 * 1024 * 1024;
+export const proofUrl = id => `/api/proofs/${id}`;
+// Stores one proof image (already validated) for the owner and returns its URL. The Telegram bot uses it too.
+export async function saveProof(db, owner, mime, base64) {
+  if (base64.length * 3 / 4 > PROOF_LIMIT) throw new Error('TOO_LARGE');
+  const id = crypto.randomUUID();
+  await db.prepare('INSERT INTO proofs (id, owner, mime, data, size, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(id, owner.toLowerCase(), mime, base64, Math.round(base64.length * 3 / 4), new Date().toISOString()).run();
+  return proofUrl(id);
+}
+async function proofs(request, env, url) {
+  if (!await authorized(request, env)) return json({ error: 'Sesi tamat. Muat semula laman dan log masuk semula.' }, 401);
+  if (!env.DB) return json({ error: 'Storan bukti belum tersedia.' }, 503);
+  const id = url.pathname.slice('/api/proofs/'.length);
+  if (request.method === 'GET' && /^[0-9a-f-]{36}$/.test(id)) {
+    const row = await env.DB.prepare('SELECT mime, data FROM proofs WHERE id = ? AND owner = ?').bind(id, env.OWNER_EMAIL.toLowerCase()).first();
+    if (!row) return json({ error: 'Bukti tidak dijumpai.' }, 404);
+    return new Response(Uint8Array.from(atob(row.data), c => c.charCodeAt(0)), { headers: { 'Content-Type': row.mime, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } });
+  }
+  if (request.method !== 'POST' || url.pathname !== '/api/proofs') return json({ error: 'Method not allowed' }, 405);
+  const origin = request.headers.get('origin'); if (origin && origin !== url.origin) return json({ error: 'Asal permintaan tidak dibenarkan.' }, 403);
+  if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: 'Gunakan JSON.' }, 415);
+  try {
+    const body = await limitedBody(request); const image = imageData(body.imageBase64);
+    const [, mime, base64] = image.match(/^data:([^;]+);base64,(.+)$/);
+    return json({ url: await saveProof(env.DB, env.OWNER_EMAIL, mime, base64) });
+  } catch (error) {
+    if (error?.message === 'TOO_LARGE') return json({ error: 'Gambar bukti terlalu besar (had 1.5 MB).' }, 413);
+    if (['BAD_JSON', 'BAD_IMAGE'].includes(error?.message)) return json({ error: 'Gambar tidak sah. Gunakan JPEG, PNG atau WebP.' }, 400);
+    console.error(JSON.stringify({ event: 'proof_upload_failed', name: error?.name || 'Error' }));
+    return json({ error: 'Bukti tidak dapat disimpan. Cuba lagi.' }, 503);
+  }
 }
 async function readState(env) {
   const row = await env.DB.prepare('SELECT document, revision, generation, updated_at FROM account_state WHERE owner = ?').bind(env.OWNER_EMAIL.toLowerCase()).first();
@@ -135,6 +169,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/api/state') return syncState(request, env);
+    if (url.pathname === '/api/proofs' || url.pathname.startsWith('/api/proofs/')) return proofs(request, env, url);
     if (url.pathname === '/api/health') return json({ status: 'ok', hosting: 'cloudflare-pages', cloudSyncConfigured: !!env.DB, receiptOcrConfigured: !!env.AI, model: OCR_MODEL });
     if (url.pathname === '/api/scan-receipt') {
       if (request.method !== 'POST') return json({ error: 'Gunakan POST untuk mengimbas resit.' }, 405);

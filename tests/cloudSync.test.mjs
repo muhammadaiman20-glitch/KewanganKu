@@ -42,3 +42,19 @@ test('edits made while an upload is in flight are uploaded next, not replaced by
 test('offline cloud reset fails without clearing local records',async()=>{const server=backend(),d=device(server);d.data.expenses=[expense('keep')];await d.engine.sync();d.offline=true;await assert.rejects(d.engine.resetAll());assert.equal(d.data.expenses.length,1);d.engine.stop();server.sqlite.close();});
 
 test('saved bank details sync to another device without changing debt balances or bill customer accounts',async()=>{const server=backend(),a=device(server),b=device(server);const bankDetails={bankName:'Maybank',accountNumber:'001234567890',accountHolder:'Aiman'};a.data.debts=[{id:'d',title:'Loan',creditor:'Lender',status:'active',originalAmount:1000,remainingBalance:800,monthlyInstallment:100,dueDay:25,interestRate:0,tenureMonthsTotal:10,tenureMonthsRemaining:8,payments:[],bankDetails}];a.data.bills=[{id:'b',name:'Internet',provider:'Provider',status:'unpaid',cycle:'monthly',dueDate:'2026-10-25',amount:99,dueDay:25,paymentHistory:[],accountNumber:'CUSTOMER-999',bankDetails}];await a.engine.sync();await b.engine.sync();assert.deepEqual(b.data.debts[0].bankDetails,bankDetails);assert.equal(b.data.debts[0].remainingBalance,800);assert.equal(b.data.debts[0].payments.length,0);assert.deepEqual(b.data.bills[0].bankDetails,bankDetails);assert.equal(b.data.bills[0].accountNumber,'CUSTOMER-999');assert.equal(b.data.bills[0].status,'unpaid');a.engine.stop();b.engine.stop();server.sqlite.close();});
+test('proof photos upload and download only for the signed-in owner', async () => {
+ const { readFileSync } = await import('node:fs');
+ const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../schema-sync.sql', import.meta.url), 'utf8'));
+ const DB = { prepare(sql) { return { bind(...params) { const stmt = sqlite.prepare(sql); return { first: async () => stmt.get(...params) || null, run: async () => ({ meta: { changes: Number(stmt.run(...params).changes) } }) }; } }; } };
+ const env = { DB, OWNER_EMAIL: 'owner@example.com', ACCESS_AUD: 'app', ACCESS_TEAM_DOMAIN: 'test.cloudflareaccess.com' };
+ const call = (url, init = {}, auth = token) => worker.fetch(new Request('https://kewanganku.pages.dev' + url, { ...init, headers: { ...init.headers, 'Cf-Access-Jwt-Assertion': auth } }), env);
+ const jpeg = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9]).toString('base64');
+ const up = await call('/api/proofs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ imageBase64: jpeg }) });
+ assert.equal(up.status, 200); const { url } = await up.json(); assert.match(url, /^\/api\/proofs\/[0-9a-f-]{36}$/);
+ const down = await call(url); assert.equal(down.status, 200); assert.equal(down.headers.get('content-type'), 'image/jpeg');
+ assert.deepEqual([...new Uint8Array(await down.arrayBuffer())], [0xff, 0xd8, 0xff, 0xe0, 9, 9]);
+ assert.equal((await call(url, {}, 'forged')).status, 401);
+ assert.equal((await call('/api/proofs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ imageBase64: 'data:image/jpeg;base64,AAAA' }) })).status, 400);
+ assert.equal((await call('/api/proofs/00000000-0000-0000-0000-000000000000')).status, 404);
+ sqlite.close();
+});

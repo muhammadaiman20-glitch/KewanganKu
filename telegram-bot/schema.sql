@@ -46,3 +46,11 @@ CREATE TABLE IF NOT EXISTS seen_updates (
   update_id   INTEGER PRIMARY KEY,
   at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- The record waiting for its receipt photo in each chat: the next photo sent there is attached as its proof.
+CREATE TABLE IF NOT EXISTS proof_wait (
+  chat_id     INTEGER PRIMARY KEY,
+  ref         TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

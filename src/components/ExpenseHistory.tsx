@@ -3,6 +3,7 @@ import { Trash2 } from 'lucide-react';
 import { ExpenseItem } from '../types';
 import { formatRM } from '../services/storage';
 import { localDate } from '../services/voiceCommand';
+import { isFloating } from '../services/proof';
 
 export function ExpenseHistory({ expenses, onDelete }: { expenses: ExpenseItem[]; onDelete: (id: string) => void }) {
   const total = expenses.filter(e => e.date.startsWith(localDate().slice(0, 7))).reduce((sum, e) => sum + e.amount, 0);
@@ -11,7 +12,10 @@ export function ExpenseHistory({ expenses, onDelete }: { expenses: ExpenseItem[]
     <p className="text-sm text-slate-300 mb-3">Bulan ini: <strong>{formatRM(total)}</strong></p>
     {!expenses.length && <p className="text-sm text-slate-300">Belum ada rekod. Gunakan Input Suara untuk menambah perbelanjaan.</p>}
     <ul className="max-h-64 overflow-y-auto divide-y divide-slate-700">{expenses.map(e => <li key={e.id} className="flex items-center gap-3 py-3">
-      <div className="min-w-0 flex-1"><p className="break-words">{e.description}</p><p className="text-xs text-slate-300">{e.date}</p></div>
+      <div className="min-w-0 flex-1"><p className="break-words">{e.description}</p><p className="text-xs text-slate-300">{e.date}
+        {isFloating(e) ? <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-200">Terapung</span>
+          : e.receiptUrl ? <a href={e.receiptUrl} target="_blank" rel="noopener noreferrer" className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300 underline">Resit</a> : null}
+      </p></div>
       <strong className="whitespace-nowrap">{formatRM(e.amount)}</strong>
       <button type="button" aria-label={`Padam ${e.description}`} className="p-3 rounded-lg text-rose-300 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" onClick={() => { if (window.confirm(`Padam perbelanjaan ${e.description}?`)) onDelete(e.id); }}><Trash2 size={18} /></button>
     </li>)}</ul>
