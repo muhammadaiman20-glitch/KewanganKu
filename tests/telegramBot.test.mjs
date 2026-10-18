@@ -370,3 +370,17 @@ test('without a Groq key the old behaviour stays: the next Workers AI model is t
   assert.equal(await think(env, [], 'hai', ui), 'OK');
   assert.deepEqual(models, ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
 });
+
+test('when Groq rate-limits gpt-oss-120b, the backup rotates to Qwen with its reasoning hidden', async () => {
+  const { env } = setup(); const models = []; const orig = globalThis.fetch;
+  env.GROQ_API_KEY = 'k'; env.AI = { run: async () => { throw new Error('daily free allocation of 10,000 neurons'); } };
+  globalThis.fetch = async (url, init) => {
+    const b = JSON.parse(init.body); models.push([b.model, b.reasoning_effort, b.reasoning_format]);
+    if (b.model === 'openai/gpt-oss-120b') return Response.json({ error: { message: 'Rate limit reached ... Please try again in 42s.' } }, { status: 429 });
+    return Response.json({ choices: [{ message: { content: 'Baki PTPTN ialah RM300.00.' } }] });
+  };
+  try {
+    assert.equal(await think(env, [], 'baki ptptn brp?', []), 'Baki PTPTN ialah RM300.00.');
+    assert.deepEqual(models, [['openai/gpt-oss-120b', 'medium', undefined], ['qwen/qwen3.8-27b', undefined, 'hidden']]);
+  } finally { globalThis.fetch = orig; }
+});

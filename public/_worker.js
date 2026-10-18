@@ -1,6 +1,6 @@
 export const OCR_MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct';
-// Groq is the backup AI (secret GROQ_API_KEY). It hosts the same open models, so answers keep the same shape.
-export const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Groq is the backup AI (secret GROQ_API_KEY): same gpt-oss-120b for chat; Qwen for images.
+export const GROQ_VISION_MODEL = 'qwen/qwen3.8-27b'; // reads receipts as well as Llama 4 Scout (tested), which Groq doesn't host
 export const GROQ_CHAT_MODEL = 'openai/gpt-oss-120b';
 // OpenAI-compatible chat call to Groq. Throws with Groq's own message on failure.
 export async function groqChat(key, body, timeoutMs = 60000) {
@@ -210,7 +210,7 @@ export default {
       if (!env.AI && !env.GROQ_API_KEY) return json({ error: 'Workers AI belum tersedia. Cuba lagi kemudian.' }, 503);
       try {
         const body = await limitedBody(request); const image = imageData(body.imageBase64);
-        // Workers AI first; Groq (same Llama 4 Scout model) if it fails, e.g. when the free daily allowance runs out.
+        // Workers AI first; Groq (Qwen vision) if it fails, e.g. when the free daily allowance runs out.
         let output, source = 'cloudflare-workers-ai', model = OCR_MODEL;
         try {
           if (!env.AI) throw new Error('no Workers AI binding');

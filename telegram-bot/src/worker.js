@@ -220,6 +220,31 @@ export function toMessage(r) {
   return { role: 'assistant', content, ...(calls.length ? { tool_calls: calls } : {}) };
 }
 
+// Groq's free plan allows ~8,000 tokens a minute PER MODEL and one bot request is 3-5k tokens, so the backup
+// rotates: gpt-oss-120b (same model as Workers AI), then Qwen (tested: good Malay, good tool use). If both are
+// rate-limited and Groq says to retry within a few seconds, wait once and try again. Returns null if all fail.
+const GROQ_CHAT_ROTATION = [GROQ_CHAT_MODEL, 'qwen/qwen3.8-27b'];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function groqFallback(env, input, effort) {
+  const models = [env.GROQ_CHAT_MODEL || GROQ_CHAT_ROTATION[0], ...GROQ_CHAT_ROTATION.slice(1)];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let wait = Infinity;
+    for (const model of models) {
+      const extra = model.startsWith('openai/gpt-oss') ? { reasoning_effort: effort } : { reasoning_format: 'hidden' };
+      try { return toMessage(await groqChat(env.GROQ_API_KEY, { model, ...input, ...extra })); }
+      catch (g) {
+        const msg = String(g?.message || g);
+        console.warn('Groq failed', model, msg.slice(0, 160));
+        const s = msg.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
+        if (s) wait = Math.min(wait, (Number(s[1] || 0) * 60 + Number(s[2])) * 1000);
+      }
+    }
+    if (attempt || wait > 9000) return null;
+    await sleep(wait + 250);
+  }
+  return null;
+}
+
 async function runModel(env, messages, tools = true, effort = 'low') {
   const input = { messages, max_tokens: 2500, temperature: 0.2, ...(tools ? { tools: TOOLS } : {}) };
   const model = env.AI_MODEL || CHAT_MODEL;
@@ -227,11 +252,8 @@ async function runModel(env, messages, tools = true, effort = 'low') {
   try { return toMessage(await env.AI.run(model, model.startsWith('@cf/openai/') ? { ...input, reasoning_effort: effort } : input)); }
   catch (e) {
     console.warn('Workers AI failed', String(e?.message || e).slice(0, 200));
-    // Backup 1: the same gpt-oss-120b on Groq (works when the Workers AI daily allowance is used up).
-    if (env.GROQ_API_KEY) {
-      try { return toMessage(await groqChat(env.GROQ_API_KEY, { model: env.GROQ_CHAT_MODEL || GROQ_CHAT_MODEL, ...input, reasoning_effort: effort })); }
-      catch (g) { console.warn('Groq failed', String(g?.message || g).slice(0, 200)); }
-    }
+    // Backup 1: Groq (works when the Workers AI daily allowance is used up).
+    if (env.GROQ_API_KEY) { const m = await groqFallback(env, input, effort); if (m) return m; }
     // Backup 2: another Workers AI model.
     return toMessage(await env.AI.run(FALLBACK_MODEL, input));
   }
