@@ -138,10 +138,12 @@ test('webhook: wrong secret is 403, stranger only gets their id, duplicates are 
     assert.equal((await worker.fetch(req('wrong', {}), env)).status, 403);
     const stranger = { update_id: 1, message: { from: { id: 7 }, chat: { id: 7, type: 'private' }, text: '/summary' } };
     assert.equal((await worker.fetch(req('s3cret', stranger), env)).status, 200);
-    assert.match(sent[0][1].text, /private bot.*7/); sent.length = 0;
+    assert.match(sent[0][1].text, /KewanganKu Assistant[\s\S]*<code>7<\/code>/); assert.equal(sent[0][1].reply_markup.inline_keyboard[0][0].url, 'https://kewanganku.pages.dev'); sent.length = 0;
     const owner = { update_id: 2, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: '/summary' } };
     await handleUpdate(env, owner); await handleUpdate(env, owner);
     assert.equal(sent.filter(([m]) => m === 'sendMessage').length, 1); assert.match(sent[0][1].text, /Spent this month/);
+    sent.length = 0; await handleUpdate(env, { update_id: 4, message: { from: { id: 42, first_name: 'Aiman' }, chat: { id: 42, type: 'private' }, text: '/start kewanganku' } });
+    assert.match(sent[0][1].text, /Selamat datang, <b>Aiman<\/b>/); assert.equal(sent[0][1].parse_mode, 'HTML');
     sent.length = 0; await handleUpdate(env, { update_id: 3, message: { from: { id: 42 }, chat: { id: -5, type: 'group' }, text: '/summary' } });
     assert.equal(sent.length, 0);
   } finally { globalThis.fetch = orig; }

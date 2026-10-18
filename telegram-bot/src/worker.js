@@ -319,6 +319,41 @@ export const COMMANDS = [
   ['search', 'Search issues + notes'], ['reset', "Forget this chat's conversation"], ['id', 'Show your Telegram id'],
 ];
 
+// Branding shown in Telegram: the bot profile (set by /setup), the /start card and the no-access card.
+const APP_URL = 'https://kewanganku.pages.dev';
+const BOT_NAME = 'KewanganKu Assistant';
+const BOT_SHORT = 'Pembantu kewangan & teknikal peribadi untuk aplikasi KewanganKu.';
+const BOT_ABOUT = 'KewanganKu Assistant\n\nRekod perbelanjaan, bayar hutang dan bil, semak ringkasan bulanan, dan dapatkan bantuan teknikal — terus dari Telegram, diselaraskan dengan aplikasi KewanganKu.\n\nSetiap perubahan wang perlu disahkan sebelum disimpan.';
+const appButton = { reply_markup: { inline_keyboard: [[{ text: '📱 Buka KewanganKu', url: APP_URL }]] } };
+
+const WELCOME = (name) => [
+  '💼 <b>KewanganKu Assistant</b>',
+  '<i>Pembantu kewangan &amp; teknikal peribadi anda</i>',
+  '',
+  `Selamat datang${name ? `, <b>${esc(name)}</b>` : ''}! Bot ini telah disambungkan ke akaun KewanganKu anda.`,
+  '',
+  '<b>Apa yang boleh dibuat</b>',
+  '💸 Rekod perbelanjaan — <i>"beli nasi lemak RM12.50"</i>',
+  '🏦 Bayar hutang &amp; bil — <i>"bayar PTPTN RM200 semalam"</i>',
+  '📊 Ringkasan bulanan — /summary',
+  '🚗 Kenderaan &amp; log minyak — /fin fuel',
+  '🛠 Bantuan teknikal — terangkan masalah atau hantar tangkapan skrin',
+  '',
+  '🔐 Setiap perubahan wang dan pemadaman perlu disahkan dengan butang <b>Sahkan</b> sebelum disimpan.',
+  '',
+  'Taip /help untuk senarai penuh arahan.',
+].join('\n');
+
+const NO_ACCESS = (id) => [
+  '🔒 <b>KewanganKu Assistant</b>',
+  '<i>Akses peribadi</i>',
+  '',
+  'Bot ini hanya untuk pemilik akaun KewanganKu dan belum diaktifkan untuk akaun Telegram ini.',
+  '',
+  'Jika ini akaun anda, berikan ID di bawah kepada pentadbir untuk mengaktifkan akses:',
+  `🆔 <code>${esc(id)}</code>`,
+].join('\n');
+
 const HELP = `**TechDesk** — tell me the problem (or send a screenshot of the error), or ask about your money.
 I can create, read, update and delete:
 - tech issues and saved fixes (notes)
@@ -353,13 +388,14 @@ export function fmtSummary(s) {
 }
 
 // Slash commands that don't need the AI. Returns reply text, or null to fall through to the AI.
-async function command(env, chatId, text) {
+async function command(env, chatId, text, from) {
   const [cmd0, ...rest] = text.trim().split(/\s+/);
   const cmd = cmd0.toLowerCase().replace(/@\w+$/, '');
   const arg = rest.join(' ').trim();
   const ui = [];
   switch (cmd) {
-    case '/start': case '/help': return HELP;
+    case '/start': return { html: WELCOME(from?.first_name), extra: appButton };
+    case '/help': return HELP;
     case '/id': return `Your Telegram id: \`${chatId}\``;
     case '/reset':
       await env.DB.prepare('DELETE FROM messages WHERE chat_id = ?').bind(chatId).run();
@@ -431,7 +467,8 @@ async function onMessage(env, msg) {
   const chatId = msg.chat.id;
   let text = msg.text || msg.caption || '';
   if (text.startsWith('/')) {
-    const reply = await command(env, chatId, text);
+    const reply = await command(env, chatId, text, msg.from);
+    if (reply?.html) return tg(env, 'sendMessage', { chat_id: chatId, text: reply.html, parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...reply.extra });
     if (reply !== null) return send(env, chatId, reply);
   }
   await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
@@ -467,7 +504,7 @@ export async function handleUpdate(env, update) {
   const owners = String(env.OWNER_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
   // Owner only, and only in a private chat with the bot, so finance data never lands in a group.
   if (!owners.includes(String(from)) || (update.message && update.message.chat.type !== 'private')) {
-    if (update.message?.chat?.type === 'private') await tg(env, 'sendMessage', { chat_id: chatId, text: `This is a private bot. Your Telegram id is ${from}.` });
+    if (update.message?.chat?.type === 'private') await tg(env, 'sendMessage', { chat_id: chatId, text: NO_ACCESS(from), parse_mode: 'HTML', ...appButton });
     return;
   }
   try {
@@ -496,7 +533,12 @@ export default {
       if (!env.WEBHOOK_SECRET || !same(request.headers.get('Authorization'), `Bearer ${env.WEBHOOK_SECRET}`)) return new Response('Forbidden', { status: 403 });
       const hook = await tg(env, 'setWebhook', { url: `${url.origin}/telegram`, secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'], drop_pending_updates: true });
       const cmds = await tg(env, 'setMyCommands', { commands: COMMANDS.map(([command, description]) => ({ command, description })) });
-      return Response.json({ webhook: hook, commands: cmds });
+      const profile = {
+        name: await tg(env, 'setMyName', { name: BOT_NAME }),
+        short: await tg(env, 'setMyShortDescription', { short_description: BOT_SHORT }),
+        about: await tg(env, 'setMyDescription', { description: BOT_ABOUT }),
+      };
+      return Response.json({ webhook: hook, commands: cmds, profile });
     }
     if (url.pathname !== '/telegram' || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (!env.WEBHOOK_SECRET || !same(request.headers.get('X-Telegram-Bot-Api-Secret-Token'), env.WEBHOOK_SECRET)) return new Response('Forbidden', { status: 403 });
