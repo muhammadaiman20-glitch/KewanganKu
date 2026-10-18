@@ -27,7 +27,8 @@ function toDataUrl(p: Pixels, quality: number): string {
 }
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
-export function DocumentCropper({ source, onCancel, onDone }: { source: string; onCancel: () => void; onDone: (dataUrl: string) => void }) {
+// onScanReady fires with each newly cropped scan, so the caller can start the AI read before the owner confirms.
+export function DocumentCropper({ source, onCancel, onDone, onScanReady }: { source: string; onCancel: () => void; onDone: (dataUrl: string) => void; onScanReady?: (dataUrl: string) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const pixels = useRef<Pixels | null>(null);
@@ -81,8 +82,12 @@ export function DocumentCropper({ source, onCancel, onDone }: { source: string; 
     if (!pixels.current) return;
     setBusy(true); setError(''); await nextFrame();
     try {
-      if (!reuseFlat || !flat.current) flat.current = warp(pixels.current, q);
-      setResult(toDataUrl(enhance(flat.current, f), f === 'document' ? 0.82 : 0.86)); setStep('result');
+      const fresh = !reuseFlat || !flat.current;
+      if (fresh) flat.current = warp(pixels.current, q);
+      const scan = toDataUrl(enhance(flat.current!, f), f === 'document' ? 0.82 : 0.86);
+      setResult(scan); setStep('result');
+      // A new crop: the text is the same whatever filter is picked next, so the AI can start reading now.
+      if (fresh) onScanReady?.(scan);
     } catch (e) { setError(e instanceof Error ? e.message : 'Imbasan tidak dapat diproses.'); }
     finally { setBusy(false); }
   };

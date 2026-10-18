@@ -23,3 +23,11 @@ test('Access JWT requires matching audience, issuer, email and verified signatur
  const response=await worker.fetch(apiRequest,{...env,AI:originalRun}); assert.equal(response.status,200);assert.equal((await response.json()).data.amount,65);
  } finally {globalThis.fetch=original;}
 });
+test('fast read: key lines replace the full transcription; unreadable images still fail', () => {
+  const r = normalizeReceipt({ readable: true, merchantName: 'PETRONAS', amount: 50, date: '2026-10-18', category: 'fuel', keyLines: ['PETRONAS', 'Tarikh: 18/10/2026', 'JUMLAH RM 50.00', 7], amountEvidence: 'JUMLAH RM 50.00', fuelDetails: { litres: 24.39, pricePerLitre: 2.05, fuelType: 'RON95' } });
+  assert.equal(r.rawText, 'PETRONAS\nTarikh: 18/10/2026\nJUMLAH RM 50.00'); assert.equal(r.amount, 50); assert.equal(r.fuelDetails.litres, 24.39);
+  assert.throws(() => normalizeReceipt({ readable: false, keyLines: ['x'] }), /UNREADABLE/);
+  assert.throws(() => normalizeReceipt({ readable: true, keyLines: [] }), /UNREADABLE/);
+  const input = buildOcrInput('data:image/jpeg;base64,AAAA');
+  assert.equal(input.max_tokens, 800); assert.match(input.messages[0].content, /Do NOT transcribe the whole receipt/);
+});

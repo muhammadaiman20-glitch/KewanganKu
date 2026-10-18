@@ -28,13 +28,24 @@ const control = 'w-full min-h-11 rounded-xl border border-slate-600 bg-slate-950
 async function prepareImage(dataUrl: string): Promise<string> {
   const img = new Image(); img.src = dataUrl; await img.decode();
   if (!img.width || !img.height) throw new Error('Gambar tidak dapat dibaca.');
-  const scale = Math.min(1, 2200 / Math.max(img.width, img.height));
+  // 1600 px is plenty for a cleaned document scan and keeps the upload small on mobile data.
+  const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
   const canvas = document.createElement('canvas'); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
   const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Pelayar tidak dapat menyediakan gambar.');
   ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const output = canvas.toDataURL('image/jpeg', 0.94);
   if (output.length > 7 * 1024 * 1024) throw new Error('Gambar terlalu besar. Potong gambar kepada bahagian resit dan cuba lagi.');
   return output;
+}
+
+type Reading = { data: Extraction; warning?: string };
+async function readReceipt(prepared: string, signal: AbortSignal): Promise<Reading> {
+  const response = await fetch('/api/scan-receipt', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: prepared }), signal });
+  if (response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Sesi log masuk tamat. Muat semula laman dan log masuk semula.');
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Imbasan gagal. Sila cuba lagi.');
+  const data: Extraction = payload.data; if (!data?.rawText) throw new Error('Resit tidak dapat dibaca. Ambil semula gambar yang lebih jelas.');
+  return { data, warning: payload.warning };
 }
 
 export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSaveToDebt, onSaveToSubscription, onSaveToFuel, onSaveExpense, onNavigate }: OcrScannerScreenProps) {
@@ -69,7 +80,7 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
   const stream = useRef<MediaStream | null>(null); const pending = useRef<AbortController | null>(null);
   const sequence = useRef(0); const alive = useRef(true); const saving = useRef(false);
   const stopCamera = () => { cameraTicket.current++; setStarting(false); stream.current?.getTracks().forEach(t => t.stop()); stream.current = null; setCamera(false); };
-  useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; pending.current?.abort(); stream.current?.getTracks().forEach(t => t.stop()); }; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; pending.current?.abort(); early.current?.controller.abort(); stream.current?.getTracks().forEach(t => t.stop()); }; }, []);
   useEffect(() => { if (camera && video.current && stream.current) { video.current.srcObject = stream.current; void video.current.play().catch(() => setNotice('Kamera tidak dapat dimainkan. Cuba buka semula atau muat naik gambar.')); } }, [camera]);
   const startCamera = async (nextFacing = facing) => {
     stopCamera(); setNotice(''); setStarting(true);
@@ -81,18 +92,26 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
     } catch { if (alive.current && cameraTicket.current === ticket) setNotice('Kamera tidak tersedia atau akses ditolak. Benarkan kamera atau pilih gambar daripada galeri.'); }
     finally { if (alive.current && cameraTicket.current === ticket) setStarting(false); }
   };
+  // The AI read takes ~6-10 s, so it starts as soon as document mode shows the cleaned scan (prefetch), while the
+  // owner is still choosing a filter. scan() then reuses that request instead of starting a new one.
+  const early = useRef<{ controller: AbortController; reading: Promise<Reading> } | null>(null);
+  const dropEarly = () => { early.current?.controller.abort(); early.current = null; };
+  const prefetch = (documentScan: string) => {
+    dropEarly(); const controller = new AbortController();
+    const reading = prepareImage(documentScan).then(prepared => readReceipt(prepared, controller.signal));
+    reading.catch(() => undefined); early.current = { controller, reading };
+  };
   const scan = async (source: string) => {
-    pending.current?.abort(); const id = ++sequence.current; const controller = new AbortController(); pending.current = controller;
+    pending.current?.abort(); const id = ++sequence.current;
+    const pre = early.current; early.current = null;
+    const controller = pre?.controller ?? new AbortController(); pending.current = controller;
     setBusy(true); setResult(null); setNotice(''); setSaved(false); setReviewed(false); stopCamera(); optionsDialog.current?.close(); openReview();
     const timeout = setTimeout(() => controller.abort(), 90000);
     try {
       const prepared = await prepareImage(source); if (!alive.current || sequence.current !== id) return;
       setImage(prepared);
-      const response = await fetch('/api/scan-receipt', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: prepared }), signal: controller.signal });
-      if (response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Sesi log masuk tamat. Muat semula laman dan log masuk semula.');
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Imbasan gagal. Sila cuba lagi.');
-      const data: Extraction = payload.data; if (!data?.rawText) throw new Error('Resit tidak dapat dibaca. Ambil semula gambar yang lebih jelas.');
+      const { data, warning } = await (pre ? pre.reading.catch(() => readReceipt(prepared, controller.signal)) : readReceipt(prepared, controller.signal));
+      const payload = { warning };
       if (!alive.current || sequence.current !== id) return;
       setResult(data); setMerchant(data.merchantName || ''); setAmount(data.amount == null ? '' : String(data.amount)); setDate(data.date || '');
       setCategory(['fuel', 'subscription', 'debt'].includes(data.suggestedModule) ? data.suggestedModule : 'expense');
@@ -106,7 +125,7 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
   const [crop, setCrop] = useState<{ source: string; from: 'camera' | 'gallery' } | null>(null);
   const endCrop = () => { if (crop?.from === 'gallery') URL.revokeObjectURL(crop.source); setCrop(null); };
   const capture = () => { const v = video.current; if (!v?.videoWidth) { setNotice('Tunggu sehingga kamera bersedia.'); return; } const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d')?.drawImage(v, 0, 0); stopCamera(); setCrop({ source: c.toDataURL('image/jpeg', 0.94), from: 'camera' }); };
-  const reset = () => { sequence.current++; pending.current?.abort(); stopCamera(); setBusy(false); setImage(null); setResult(null); setNotice(''); setSaved(false); setReviewed(false); };
+  const reset = () => { sequence.current++; pending.current?.abort(); dropEarly(); stopCamera(); setBusy(false); setImage(null); setResult(null); setNotice(''); setSaved(false); setReviewed(false); };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (saving.current || saved || !reviewed) return;
     const total = Number(amount); if (!Number.isFinite(total) || total <= 0 || !merchant.trim() || !date || date > localDate()) { setNotice('Lengkapkan nama, jumlah positif dan tarikh transaksi yang sah.'); return; }
@@ -169,8 +188,8 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
         stopCamera(); setCrop({ source: URL.createObjectURL(file), from: 'gallery' });
       }} />
     </div>
-    {crop && <DocumentCropper source={crop.source}
-      onCancel={() => { const from = crop.from; endCrop(); if (from === 'camera') void startCamera(); }}
+    {crop && <DocumentCropper source={crop.source} onScanReady={prefetch}
+      onCancel={() => { const from = crop.from; dropEarly(); endCrop(); if (from === 'camera') void startCamera(); }}
       onDone={scanned => { endCrop(); void scan(scanned); }} />}
     <dialog ref={reviewDialog} className="receipt-sheet" aria-label="Semakan hasil OCR" onCancel={event => { event.preventDefault(); event.stopPropagation(); closeReview(); }}>
       <div className="receipt-sheet-heading"><div><h2>{saved ? 'Resit disimpan' : 'Semak bacaan resit'}</h2><p>Workers AI · Semakan sebelum simpan</p></div><button type="button" className="receipt-icon-button" onClick={closeReview} aria-label="Kembali ke kamera"><X size={22} /></button></div>
