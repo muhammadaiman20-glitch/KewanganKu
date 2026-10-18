@@ -206,6 +206,8 @@ export default {
         if (['BAD_JSON', 'BAD_IMAGE'].includes(code)) return json({ error: 'Gambar tidak sah. Gunakan JPEG, PNG atau WebP.' }, 400);
         if (code === 'UNREADABLE') return json({ error: 'Teks resit tidak jelas. Ambil semula gambar lurus dengan cahaya yang cukup.' }, 422);
         if (code === 'INVALID_RESULT') return json({ error: 'Bacaan AI tidak lengkap. Cuba imbas semula gambar yang lebih jelas.' }, 502);
+        // Free plan: 10,000 AI neurons a day, reset at 00:00 UTC.
+        if (/neurons|daily free allocation|4006/i.test(code)) return json({ error: 'Had AI harian Cloudflare telah habis. Ia ditetapkan semula pada 8:00 pagi (waktu Malaysia). Buat masa ini, isi butiran resit secara manual.' }, 429);
         console.error(JSON.stringify({ event: 'receipt_ocr_failed', name: error?.name || 'Error' }));
         return json({ error: 'Workers AI tidak dapat memproses resit sekarang. Cuba lagi; tiada rekod disimpan.' }, 502);
       }

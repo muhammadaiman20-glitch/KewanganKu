@@ -40,15 +40,15 @@ test('finance add only saves after confirm, bumps revision, and a second tap is 
   const r = await runTool(env, 'finance_add', { collection: 'expense', record: { description: 'nasi lemak', amount: 'RM12.50' } }, ui);
   assert.match(r.pending, /NOT saved/); assert.equal(doc().expenses.length, 1);
   const token = tokenOf(ui);
-  assert.match(await resolvePending(env, 'ok', token), /Saved expense/);
+  assert.match(await resolvePending(env, 'ok', token), /Disimpan \(perbelanjaan\)/);
   const after = doc(); assert.equal(after.revision, 8); assert.equal(after.expenses[0].amount, 12.5); assert.equal(after.expenses[0].date, todayMY()); assert.equal(after.expenses[0].source, 'manual');
-  assert.match(await resolvePending(env, 'ok', token), /expired|already used/); assert.equal(doc().expenses.length, 2);
+  assert.match(await resolvePending(env, 'ok', token), /tamat tempoh|sudah digunakan/); assert.equal(doc().expenses.length, 2);
 });
 
 test('cancel discards the action', async () => {
   const { env, doc } = setup(), ui = [];
   await runTool(env, 'finance_delete', { collection: 'bills', id: 'b1' }, ui);
-  assert.match(await resolvePending(env, 'no', tokenOf(ui)), /Cancelled/); assert.equal(doc().bills.length, 1);
+  assert.match(await resolvePending(env, 'no', tokenOf(ui)), /Dibatalkan/); assert.equal(doc().bills.length, 1);
 });
 
 test('edit is refused if the app changed the same field after the preview', async () => {
@@ -56,7 +56,7 @@ test('edit is refused if the app changed the same field after the preview', asyn
   await runTool(env, 'finance_update', { collection: 'expenses', id: 'e1', changes: { amount: 6 } }, ui);
   const d = doc(); d.expenses[0].amount = 9; delete d.revision;
   fin.prepare('UPDATE account_state SET document = ?, revision = revision + 1').run(JSON.stringify(d));
-  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /changed in the app/); assert.equal(doc().expenses[0].amount, 9);
+  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /diubah dalam aplikasi/); assert.equal(doc().expenses[0].amount, 9);
 });
 
 test('commit retries when the app writes between read and write', async () => {
@@ -64,7 +64,7 @@ test('commit retries when the app writes between read and write', async () => {
   await runTool(env, 'finance_add', { collection: 'expenses', record: { description: 'teh', amount: 3 } }, ui);
   const realPrepare = env.FIN_DB.prepare; let raced = false;
   env.FIN_DB.prepare = (sql) => { if (sql.startsWith('UPDATE') && !raced) { raced = true; const d = doc(); delete d.revision; d.expenses.push({ id: 'from-app', description: 'app', amount: 1, date: '2026-10-18', source: 'manual' }); fin.prepare('UPDATE account_state SET document = ?, revision = revision + 1').run(JSON.stringify(d)); } return realPrepare(sql); };
-  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /Saved/);
+  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /Disimpan/);
   assert.deepEqual(doc().expenses.map((e) => e.id).filter((id) => ['e1', 'from-app'].includes(id)).sort(), ['e1', 'from-app']);
   assert.equal(doc().expenses.length, 3); assert.equal(doc().revision, 9);
 });
@@ -72,9 +72,9 @@ test('commit retries when the app writes between read and write', async () => {
 test('debt payment mirrors the app: balance, tenure, paid_off', async () => {
   const { env, doc } = setup(), ui = [];
   await runTool(env, 'finance_record_payment', { collection: 'debts', id: 'debt-1', amount: 300, date: '2026-10-17', referenceNo: 'REF1' }, ui);
-  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /paid off/);
+  assert.match(await resolvePending(env, 'ok', tokenOf(ui)), /selesai/);
   const d = doc().debts[0]; assert.equal(d.remainingBalance, 0); assert.equal(d.status, 'paid_off'); assert.equal(d.tenureMonthsRemaining, 1); assert.equal(d.payments[0].referenceNo, 'REF1');
-  assert.match((await runTool(env, 'finance_record_payment', { collection: 'debts', id: 'debt-1', amount: 1 }, [])).error, /paid off/);
+  assert.match((await runTool(env, 'finance_record_payment', { collection: 'debts', id: 'debt-1', amount: 1 }, [])).error, /already paid off/);
 });
 
 test('bill payment marks paid and keeps history', async () => {
@@ -159,7 +159,7 @@ test('quick record sends a confirm card straight away and saves only on tap', as
     await handleUpdate(env, { update_id: 9, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'beli nasi lemak RM12.50' } });
     const card = sent.find(([m, b]) => m === 'sendMessage' && b.reply_markup)[1];
     assert.match(card.text, /Nasi lemak/); assert.equal(doc().expenses.length, 1);
-    assert.match(await resolvePending(env, 'ok', card.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]), /Saved expense/);
+    assert.match(await resolvePending(env, 'ok', card.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]), /Disimpan \(perbelanjaan\)/);
     assert.equal(doc().expenses[0].description, 'Nasi lemak');
     assert.equal(await quickRecord(env, 42, 'MT5 cannot connect'), false);
   } finally { globalThis.fetch = orig; }
@@ -176,7 +176,7 @@ test('webhook: wrong secret is 403, stranger only gets their id, duplicates are 
     assert.match(sent[0][1].text, /KewanganKu Assistant[\s\S]*<code>7<\/code>/); assert.equal(sent[0][1].reply_markup.inline_keyboard[0][0].url, 'https://kewanganku.pages.dev'); sent.length = 0;
     const owner = { update_id: 2, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: '/summary' } };
     await handleUpdate(env, owner); await handleUpdate(env, owner);
-    assert.equal(sent.filter(([m]) => m === 'sendMessage').length, 1); assert.match(sent[0][1].text, /Spent this month/);
+    assert.equal(sent.filter(([m]) => m === 'sendMessage').length, 1); assert.match(sent[0][1].text, /Perbelanjaan bulan ini/);
     sent.length = 0; await handleUpdate(env, { update_id: 4, message: { from: { id: 42, first_name: 'Aiman' }, chat: { id: 42, type: 'private' }, text: '/start kewanganku' } });
     assert.match(sent[0][1].text, /Selamat datang, <b>Aiman<\/b>/); assert.equal(sent[0][1].parse_mode, 'HTML');
     sent.length = 0; await handleUpdate(env, { update_id: 3, message: { from: { id: 42 }, chat: { id: -5, type: 'group' }, text: '/summary' } });
@@ -211,7 +211,7 @@ test('a confirmed transaction without proof is floating until the next photo is 
   try {
     await handleUpdate(env, { update_id: 20, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'beli nasi lemak RM12.50' } });
     assert.match(tgm.sent.at(-1)[1].text, /Terapung/);
-    assert.match(await tapLast(env, tgm.sent), /Saved expense[\s\S]*Terapung/);
+    assert.match(await tapLast(env, tgm.sent), /Disimpan \(perbelanjaan\)[\s\S]*Terapung/);
     const saved = doc().expenses[0]; assert.equal(saved.floating, true); assert.equal(saved.receiptUrl, undefined);
     const before = summary(appData()).proofThisMonth.realised;
     assert.deepEqual(summary(doc()).proofThisMonth, { realised: before, floating: 12.5, floatingCount: 1 });
@@ -287,4 +287,62 @@ test('a reply that only pretends to show a confirm button is sent back so the re
   const ui2 = []; call = 0;
   env.AI = { run: async () => { call++; return { choices: [{ message: { content: 'RM 12.50 masih terapung (1 transaksi).' } }] }; } };
   assert.equal(await think(env, [], 'berapa terapung?', ui2), 'RM 12.50 masih terapung (1 transaksi).'); assert.equal(call, 1);
+});
+
+test('Malay texting short forms are read as standard Malay; numbers and plain English are untouched', async () => {
+  const { normalizeMalay, forModel } = await import('../telegram-bot/src/malay.js');
+  assert.equal(normalizeMalay('laptop x boleh connect wifi lps update'), 'laptop tidak boleh connect wifi lepas update');
+  assert.equal(normalizeMalay('smlm dah byr ptptn 200'), 'semalam sudah bayar ptptn 200');
+  assert.equal(normalizeMalay('brp dah abis bulan ni?'), 'berapa sudah habis bulan ini?');
+  assert.equal(normalizeMalay('kayu 2 x 3 RM10'), 'kayu 2 x 3 RM10');
+  assert.equal(forModel('MT5 cannot connect'), 'MT5 cannot connect');
+  assert.match(forModel('td mkn rm8'), /\(Bacaan bahasa baku: tadi makan rm8\)/);
+});
+
+test('records are found the way people name them: car by name, "bil api" is the TNB bill, no duplicate bills', async () => {
+  const fin = await import('../telegram-bot/src/finance.js');
+  const db = appData();
+  assert.equal(fin.list(db, { collection: 'bills', query: 'bil api' }).rows[0]?.id, 'b1');
+  assert.equal(fin.list(db, { collection: 'bills', query: 'elektrik' }).rows[0]?.id, 'b1');
+  assert.equal(fin.list(db, { collection: 'bills', query: 'air' }).rows.length, 0);
+  const fuel = fin.planAdd(db, { collection: 'fuelLogs', record: { vehicleId: 'ativa', station: 'Shell', amount: 50, litres: 24.39, pricePerLitre: 2.05, odometer: 40500 } });
+  assert.equal(fuel.action.record.vehiclePlate, 'VHY 8821');
+  const dup = fin.planAdd(db, { collection: 'bills', record: { name: 'Bil API', provider: 'TNB', category: 'electricity', amount: 120, dueDay: 15 } });
+  assert.match(dup.error, /already exists[\s\S]*finance_record_payment/);
+  assert.ok(fin.planAdd(db, { collection: 'bills', record: { name: 'Bil API', provider: 'TNB', category: 'electricity', amount: 120, dueDay: 15 }, confirmNew: true }).action);
+  assert.ok(fin.planAdd(db, { collection: 'debts', record: { title: 'Pinjaman Peribadi', creditor: 'Bank Rakyat', originalAmount: 5000, monthlyInstallment: 200, dueDay: 1 } }).action);
+  assert.equal(fin.quickPlan(db, 'smlm byr ptptn rm200', Date.parse('2026-10-19T04:00:00Z')).action.payment.date, '2026-10-18');
+  assert.match(fin.planPayment(db, { collection: 'bills', id: 'b1', amount: 120 }).preview, /^💸 Rekod bayaran RM120\.00[\s\S]*belum bayar → dibayar/);
+});
+
+test('the AI gets the real dates behind semalam / kelmarin / esok, in Malay', async () => {
+  const { datesBlock } = await import('../telegram-bot/src/worker.js');
+  const b = datesBlock(Date.parse('2026-10-19T04:00:00Z'));
+  assert.match(b, /hari ini[^\n]*Isnin 19 Oktober 2026 \(2026-10-19\)/);
+  assert.match(b, /semalam[^\n]*Ahad 18 Oktober 2026 \(2026-10-18\)/);
+  assert.match(b, /kelmarin[^\n]*2026-10-17/); assert.match(b, /esok[^\n]*2026-10-20/); assert.match(b, /bulan lepas = 2026-09/);
+});
+
+test('"dah byr" is a payment, never an expense called "Sudah bayar"', async () => {
+  const fin = await import('../telegram-bot/src/finance.js'), { normalizeMalay } = await import('../telegram-bot/src/malay.js');
+  const db = appData(), now = Date.parse('2026-10-19T04:00:00Z');
+  for (const t of ['smlm dah byr ptptn rm200', 'dah bayar ptptn rm200']) {
+    const p = fin.quickPlan(db, normalizeMalay(t), now);
+    assert.equal(p.action.op, 'pay', t); assert.equal(p.action.id, 'debt-1');
+  }
+  assert.equal(fin.quickPlan(db, normalizeMalay('beli kopi sambil bayar parking rm5'), now), null);
+});
+
+test('when the daily AI allowance runs out, the owner gets a clear Malay message, and simple records still work', async () => {
+  const { env, doc } = setup(); const sent = []; const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([String(url).split('/').pop(), JSON.parse(init.body)]); return Response.json({ ok: true }); };
+  try {
+    env.AI = { run: async () => { throw new Error('AiError: you have used up your daily free allocation of 10,000 neurons'); } };
+    await handleUpdate(env, { update_id: 70, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'kenapa laptop x boleh connect wifi?' } });
+    assert.match(sent.at(-1)[1].text, /Had AI harian Cloudflare telah habis[\s\S]*8:00 pagi/);
+    sent.length = 0;
+    await handleUpdate(env, { update_id: 71, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'smlm dah byr ptptn rm200' } });
+    const card = sent.find(([m, b]) => m === 'sendMessage' && b.reply_markup)[1];
+    assert.match(card.text, /Rekod bayaran RM200\.00/); assert.equal(card.reply_markup.inline_keyboard[0][0].text, '✅ Sahkan');
+  } finally { globalThis.fetch = orig; }
 });

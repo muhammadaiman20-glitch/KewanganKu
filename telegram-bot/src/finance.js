@@ -8,6 +8,12 @@ import { validateDatabase, receiptDate } from '../../public/_worker.js';
 const r2 = (n) => Math.round(n * 100) / 100;
 const rm = (n) => `RM${Number(n || 0).toFixed(2)}`;
 const clip = (s, n) => (s == null ? '' : String(s)).trim().slice(0, n);
+// Malay words for stored enum values, for everything the owner reads.
+const MS = {
+  active: 'aktif', paid_off: 'selesai', unpaid: 'belum bayar', paid: 'dibayar', overdue: 'tertunggak', paused: 'dijeda', cancelled: 'dibatalkan',
+  monthly: 'bulan', bi_monthly: '2 bulan', quarterly: '3 bulan', half_yearly: '6 bulan', yearly: 'tahun',
+};
+const ms = (v) => MS[v] || v;
 // Malaysia is UTC+8 all year; "today" for the owner is that date, not UTC.
 export const todayMY = (now = Date.now()) => new Date(now + 8 * 3600e3).toISOString().slice(0, 10);
 
@@ -15,13 +21,13 @@ export const todayMY = (now = Date.now()) => new Date(now + 8 * 3600e3).toISOStr
 const F = (kind, extra = {}) => ({ kind, ...extra });
 export const SPECS = {
   expenses: {
-    label: 'expense', id: () => crypto.randomUUID(),
+    label: 'expense', ms: 'perbelanjaan', id: () => crypto.randomUUID(),
     fields: { description: F('str', { req: true, max: 200 }), amount: F('num', { req: true }), date: F('date', { def: () => todayMY() }) },
     fixed: () => ({ source: 'manual', floating: true }),
     line: (r) => `${r.date} · ${rm(r.amount)} · ${r.description}`,
   },
   debts: {
-    label: 'debt', id: () => `debt-${Date.now()}`, history: 'payments',
+    label: 'debt', ms: 'hutang', id: () => `debt-${Date.now()}`, history: 'payments',
     fields: {
       title: F('str', { req: true, max: 150 }), creditor: F('str', { req: true, max: 150 }),
       type: F('enum', { values: ['car', 'housing', 'credit_card', 'education', 'personal', 'other'], def: () => 'other' }),
@@ -32,10 +38,10 @@ export const SPECS = {
       status: F('enum', { values: ['active', 'paid_off'], def: () => 'active' }), notes: F('str', { max: 1000 }),
     },
     fixed: () => ({ payments: [], createdAt: todayMY() }),
-    line: (r) => `${r.title} (${r.creditor}) · baki ${rm(r.remainingBalance)} · ${rm(r.monthlyInstallment)}/bln · hb ${r.dueDay} · ${r.status}`,
+    line: (r) => `${r.title} (${r.creditor}) · baki ${rm(r.remainingBalance)} · ${rm(r.monthlyInstallment)}/bln · hb ${r.dueDay} · ${ms(r.status)}`,
   },
   bills: {
-    label: 'bill', id: () => crypto.randomUUID(), history: 'paymentHistory',
+    label: 'bill', ms: 'bil', id: () => crypto.randomUUID(), history: 'paymentHistory',
     fields: {
       name: F('str', { req: true, max: 150 }), provider: F('str', { req: true, max: 150 }),
       category: F('enum', { values: ['electricity', 'water', 'internet', 'sewerage', 'tax', 'maintenance', 'gas', 'other'], def: () => 'other' }),
@@ -48,10 +54,10 @@ export const SPECS = {
       notes: F('str', { max: 1000 }),
     },
     fixed: () => ({ paymentHistory: [], createdAt: todayMY() }),
-    line: (r) => `${r.name} · ${rm(r.amount)} · due ${r.dueDate} · ${r.status}`,
+    line: (r) => `${r.name} · ${rm(r.amount)} · tarikh akhir ${r.dueDate} · ${ms(r.status)}`,
   },
   subscriptions: {
-    label: 'subscription', id: () => `sub-${Date.now()}`,
+    label: 'subscription', ms: 'langganan', id: () => `sub-${Date.now()}`,
     fields: {
       name: F('str', { req: true, max: 150 }), amount: F('num', { req: true }),
       category: F('enum', { values: ['entertainment', 'productivity', 'utilities', 'lifestyle', 'fitness', 'other'], def: () => 'other' }),
@@ -59,10 +65,10 @@ export const SPECS = {
       renewalDate: F('date', { req: true }), paymentMethod: F('str', { max: 60, def: () => '' }),
       status: F('enum', { values: ['active', 'paused', 'cancelled'], def: () => 'active' }), notes: F('str', { max: 1000 }),
     },
-    line: (r) => `${r.name} · ${rm(r.amount)}/${r.billingCycle} · renews ${r.renewalDate} · ${r.status}`,
+    line: (r) => `${r.name} · ${rm(r.amount)}/${ms(r.billingCycle)} · diperbaharui ${r.renewalDate} · ${ms(r.status)}`,
   },
   vehicles: {
-    label: 'vehicle', id: () => `veh-${Date.now()}`, history: 'services',
+    label: 'vehicle', ms: 'kenderaan', id: () => `veh-${Date.now()}`, history: 'services',
     fields: {
       name: F('str', { req: true, max: 150 }), plateNumber: F('str', { req: true, max: 20 }),
       type: F('enum', { values: ['car', 'motorcycle', 'suv', 'other'], def: () => 'car' }),
@@ -72,10 +78,10 @@ export const SPECS = {
       nextServiceDate: F('date', { req: true }),
     },
     fixed: () => ({ services: [] }),
-    line: (r) => `${r.plateNumber} ${r.name} · ${r.currentOdometer} km · roadtax ${r.roadTaxExpiry} · insurans ${r.insuranceExpiry}`,
+    line: (r) => `${r.plateNumber} ${r.name} · ${r.currentOdometer} km · cukai jalan ${r.roadTaxExpiry} · insurans ${r.insuranceExpiry}`,
   },
   fuelLogs: {
-    label: 'fuel log', id: () => `fuel-${Date.now()}`,
+    label: 'fuel log', ms: 'log minyak', id: () => `fuel-${Date.now()}`,
     fields: {
       vehicleId: F('str', { req: true, max: 150 }), date: F('date', { def: () => todayMY() }),
       station: F('str', { req: true, max: 60 }), fuelType: F('enum', { values: ['RON95', 'RON97', 'Diesel', 'RON100'], def: () => 'RON95' }),
@@ -87,7 +93,7 @@ export const SPECS = {
   },
 };
 export const COLLECTIONS = Object.keys(SPECS);
-const ALIASES = { expense: 'expenses', spending: 'expenses', debt: 'debts', loan: 'debts', bill: 'bills', sub: 'subscriptions', subscription: 'subscriptions', vehicle: 'vehicles', car: 'vehicles', fuel: 'fuelLogs', fuellog: 'fuelLogs', fuel_logs: 'fuelLogs', fuellogs: 'fuelLogs' };
+const ALIASES = { belanja: 'expenses', perbelanjaan: 'expenses', hutang: 'debts', pinjaman: 'debts', bil: 'bills', langganan: 'subscriptions', kenderaan: 'vehicles', kereta: 'vehicles', minyak: 'fuelLogs', petrol: 'fuelLogs', expense: 'expenses', spending: 'expenses', debt: 'debts', loan: 'debts', bill: 'bills', sub: 'subscriptions', subscription: 'subscriptions', vehicle: 'vehicles', car: 'vehicles', fuel: 'fuelLogs', fuellog: 'fuelLogs', fuel_logs: 'fuelLogs', fuellogs: 'fuelLogs' };
 export function collectionOf(name) {
   const key = String(name || '').trim();
   const found = SPECS[key] ? key : ALIASES[key.toLowerCase()] || COLLECTIONS.find((c) => c.toLowerCase() === key.toLowerCase());
@@ -146,7 +152,11 @@ export function buildRecord(collection, input, db) {
 
 const findVehicle = (db, key) => {
   const k = String(key).replace(/\s+/g, '').toLowerCase();
-  return db.vehicles.find((v) => v.id === key || v.plateNumber.replace(/\s+/g, '').toLowerCase() === k);
+  const exact = db.vehicles.find((v) => v.id === key || v.plateNumber.replace(/\s+/g, '').toLowerCase() === k);
+  if (exact) return exact;
+  const words = String(key).toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  const named = words.length ? db.vehicles.filter((v) => words.every((w) => `${v.name} ${v.plateNumber}`.toLowerCase().includes(w))) : [];
+  return named.length === 1 ? named[0] : undefined;
 };
 
 // Same derived fields the app computes when a fuel log is added.
@@ -179,7 +189,7 @@ export async function commit(env, mutate) {
       .bind(JSON.stringify(data), new Date().toISOString(), env.OWNER_EMAIL.toLowerCase(), state.revision, state.generation).run();
     if (res.meta?.changes) return summary;
   }
-  throw new Error('the app kept saving at the same moment; nothing was changed — tap again');
+  throw new Error('aplikasi sedang menyimpan pada masa yang sama; tiada perubahan — tekan sekali lagi');
 }
 
 const rows = (db, c) => db[c] || [];
@@ -205,9 +215,9 @@ export function summary(db, today = todayMY()) {
     unpaidBills: bills.map((b) => ({ id: b.id, name: b.name, amount: b.amount, dueDate: b.dueDate, overdue: b.dueDate < today })),
     subscriptions: { active: subs.length, monthlyCost: r2(subs.reduce((a, s) => a + s.amount * (perMonth[s.billingCycle] ?? 1), 0)), renewingIn14Days: subs.filter((s) => soon(s.renewalDate, 14)).map((s) => `${s.name} ${s.renewalDate}`) },
     vehicleAlerts30Days: db.vehicles.flatMap((v) => [
-      soon(v.roadTaxExpiry, 30) || v.roadTaxExpiry < today ? `${v.plateNumber} road tax ${v.roadTaxExpiry}` : null,
-      soon(v.insuranceExpiry, 30) || v.insuranceExpiry < today ? `${v.plateNumber} insurance ${v.insuranceExpiry}` : null,
-      soon(v.nextServiceDate, 30) || v.currentOdometer >= v.nextServiceOdometer ? `${v.plateNumber} service due ${v.nextServiceDate} / ${v.nextServiceOdometer} km` : null,
+      soon(v.roadTaxExpiry, 30) || v.roadTaxExpiry < today ? `${v.plateNumber} cukai jalan tamat ${v.roadTaxExpiry}` : null,
+      soon(v.insuranceExpiry, 30) || v.insuranceExpiry < today ? `${v.plateNumber} insurans tamat ${v.insuranceExpiry}` : null,
+      soon(v.nextServiceDate, 30) || v.currentOdometer >= v.nextServiceOdometer ? `${v.plateNumber} servis seterusnya ${v.nextServiceDate} / ${v.nextServiceOdometer} km` : null,
     ].filter(Boolean)),
     monthlyIncome: db.profile?.monthlyIncome || 0,
     proofThisMonth: (() => {
@@ -227,10 +237,28 @@ const compact = (c, r) => {
   return { ...rest, ...(h ? { [`${h}Count`]: (hist || []).length } : {}), ...(bankDetails ? { hasBankDetails: true } : {}) };
 };
 
+// Malaysian everyday words -> what the records actually say ("bil api" is stored as "Bil Elektrik TNB", category electricity).
+const SYNONYMS = {
+  api: ['elektrik', 'electricity', 'tnb', 'sesb', 'sesco'], elektrik: ['electricity', 'tnb', 'api'], letrik: ['elektrik', 'electricity', 'tnb'],
+  air: ['water', 'syabas', 'air selangor', 'saj', 'pbapp', 'ranhill', 'laku'], internet: ['wifi', 'unifi', 'maxis', 'time', 'celcom', 'digi', 'astro'], wifi: ['internet', 'unifi'],
+  pembetung: ['iwk', 'sewerage'], iwk: ['sewerage'], cukai: ['tax', 'taksiran'], kereta: ['car'], motor: ['motorcycle'], moto: ['motorcycle'],
+  kad: ['credit_card', 'kad kredit'], 'kad kredit': ['credit_card'], rumah: ['housing'], pendidikan: ['education', 'ptptn'], ptptn: ['education'],
+};
+// Every word of the query must appear (directly or as a synonym). Filler words are ignored.
+const FILLER = new Set(['bil', 'bayar', 'byr', 'yang', 'tu', 'ni', 'itu', 'ini', 'saya', 'sy', 'untuk', 'utk', 'bulan', 'the', 'my']);
+// Words too generic to say two bills/debts are the same one.
+const GENERIC = new Set(['pinjaman', 'loan', 'hutang', 'debt', 'kad', 'card', 'bank', 'kredit', 'credit', 'peribadi', 'personal', 'bulanan', 'monthly', 'sdn', 'bhd', 'berhad']);
+function matches(hay, query) {
+  const q = String(query).toLowerCase().trim();
+  if (hay.includes(q)) return true;
+  const words = q.split(/\s+/).filter((w) => w && !FILLER.has(w));
+  return words.length > 0 && words.every((w) => hay.includes(w) || (SYNONYMS[w] || []).some((s) => hay.includes(s)));
+}
+
 export function list(db, args) {
   const c = collectionOf(args.collection);
   let out = rows(db, c);
-  if (args.query) { const q = String(args.query).toLowerCase(); out = out.filter((r) => JSON.stringify(compact(c, r)).toLowerCase().includes(q)); }
+  if (args.query) out = out.filter((r) => matches(JSON.stringify(compact(c, r)).toLowerCase(), args.query));
   const dateKey = { expenses: 'date', fuelLogs: 'date', bills: 'dueDate', subscriptions: 'renewalDate' }[c];
   if (dateKey && args.from) out = out.filter((r) => r[dateKey] >= args.from);
   if (dateKey && args.to) out = out.filter((r) => r[dateKey] <= args.to);
@@ -281,7 +309,7 @@ export const floatingList = (db) => transactions(db).filter((x) => isFloating(x.
 // Attach a stored proof to one transaction (inside commit). Returns a short result line.
 export function attachProof(db, ref, url) {
   const x = transactions(db).find((y) => y.ref.c === ref.c && y.ref.id === ref.id && (y.ref.sub ?? null) === (ref.sub ?? null));
-  if (!x) throw new Error('that transaction no longer exists (deleted in the app?); the receipt was not attached');
+  if (!x) throw new Error('transaksi ini sudah tiada (dipadam dalam aplikasi?); resit tidak dilampirkan');
   withProof(x.t, url);
   return `🧾 Direalisasikan: ${x.label} · ${rm(x.amount)} · ${x.date}`;
 }
@@ -292,10 +320,17 @@ export function planAdd(db, args) {
   const c = collectionOf(args.collection);
   const built = buildRecord(c, args.record || {}, db);
   if (built.error) return built;
+  // "bil api dah settle" means paying the existing bill, not creating a second one.
+  if (c === 'bills' || c === 'debts') {
+    const r = built.record, key = c === 'bills' ? `${r.name} ${r.provider}` : `${r.title} ${r.creditor}`;
+    const same = rows(db, c).filter((x) => (c === 'bills' ? x.category === r.category && r.category !== 'other' : false)
+      || key.toLowerCase().split(/\s+/).filter((w) => w.length > 2 && !FILLER.has(w) && !GENERIC.has(w)).some((w) => matches(JSON.stringify(compact(c, x)).toLowerCase(), w)));
+    if (same.length && !args.confirmNew) return { error: `A similar ${SPECS[c].label} already exists: ${same.map((x) => `${SPECS[c].line(x)} (id ${x.id})`).join('; ')}. If the owner paid it, call finance_record_payment with that id instead. Only if they really want a second, separate ${SPECS[c].label}, call finance_add again with confirmNew: true.` };
+  }
   const record = c === 'fuelLogs' ? withFuelMath(db, built.record) : built.record;
   const txn = TXN_COLLECTIONS.includes(c);
   const proof = txn && args.proof ? args.proof : undefined;
-  return { action: { op: 'add', c, record, ...(proof ? { proof } : {}) }, preview: `➕ Add ${SPECS[c].label}\n${SPECS[c].line(record)}${txn ? proofNote(proof) : ''}` };
+  return { action: { op: 'add', c, record, ...(proof ? { proof } : {}) }, preview: `➕ Tambah ${SPECS[c].ms}\n${SPECS[c].line(record)}${txn ? proofNote(proof) : ''}` };
 }
 
 export function planUpdate(db, args) {
@@ -312,7 +347,7 @@ export function planUpdate(db, args) {
   }
   if (!Object.keys(changes).length) return { error: 'nothing would change' };
   const diff = Object.keys(changes).map((k) => `${k}: ${fmt(expect[k])} → ${fmt(changes[k])}`).join('\n');
-  return { action: { op: 'update', c, id: row.id, changes, expect }, preview: `✏️ Edit ${SPECS[c].label}: ${SPECS[c].line(row)}\n${diff}` };
+  return { action: { op: 'update', c, id: row.id, changes, expect }, preview: `✏️ Ubah ${SPECS[c].ms}: ${SPECS[c].line(row)}\n${diff}` };
 }
 
 export function planDelete(db, args) {
@@ -321,7 +356,7 @@ export function planDelete(db, args) {
   const h = SPECS[c].history;
   const extra = h && row[h]?.length ? `\n⚠️ This also deletes ${row[h].length} payment/service entries.` : '';
   const orphan = c === 'vehicles' && db.fuelLogs.some((l) => l.vehicleId === row.id) ? `\n⚠️ ${db.fuelLogs.filter((l) => l.vehicleId === row.id).length} fuel logs still point to this vehicle.` : '';
-  return { action: { op: 'delete', c, id: row.id }, preview: `🗑 Delete ${SPECS[c].label}\n${SPECS[c].line(row)}${extra}${orphan}` };
+  return { action: { op: 'delete', c, id: row.id }, preview: `🗑 Padam ${SPECS[c].ms}\n${SPECS[c].line(row)}${extra}${orphan}` };
 }
 
 export function planPayment(db, args) {
@@ -334,8 +369,8 @@ export function planPayment(db, args) {
   if (c === 'debts' && row.status !== 'active') return { error: `debt "${row.title}" is already paid off` };
   // The payment id is fixed now (not on confirm) so the bot can attach a receipt to it afterwards.
   const payment = { id: c === 'debts' ? `pay-${Date.now()}` : crypto.randomUUID(), amount, date, referenceNo: clip(args.referenceNo, 60) || undefined, notes: clip(args.notes, 500) || undefined };
-  const after = c === 'debts' ? `\nbaki ${rm(row.remainingBalance)} → ${rm(Math.max(0, row.remainingBalance - amount))}` : `\nstatus ${row.status} → paid`;
-  return { action: { op: 'pay', c, id: row.id, payment, ...(args.proof ? { proof: args.proof } : {}) }, preview: `💸 Record payment ${rm(amount)} on ${date}\n${SPECS[c].line(row)}${after}${proofNote(args.proof)}` };
+  const after = c === 'debts' ? `\nbaki ${rm(row.remainingBalance)} → ${rm(Math.max(0, row.remainingBalance - amount))}` : `\nstatus ${ms(row.status)} → dibayar`;
+  return { action: { op: 'pay', c, id: row.id, payment, ...(args.proof ? { proof: args.proof } : {}) }, preview: `💸 Rekod bayaran ${rm(amount)} pada ${date}\n${SPECS[c].line(row)}${after}${proofNote(args.proof)}` };
 }
 const fmt = (v) => (v === null || v === undefined ? '(empty)' : typeof v === 'number' ? String(v) : `"${v}"`);
 
@@ -344,45 +379,45 @@ export function apply(db, a) {
   const spec = SPECS[a.c];
   const list = db[a.c];
   if (a.op === 'add') {
-    if (list.some((r) => r.id === a.record.id)) return `Already saved: ${spec.line(a.record)}`;
+    if (list.some((r) => r.id === a.record.id)) return `Sudah disimpan sebelum ini: ${spec.line(a.record)}`;
     const record = withProof({ ...a.record }, a.proof);
     if (a.c === 'fuelLogs') {
       const car = db.vehicles.find((v) => v.id === record.vehicleId);
-      if (!car) throw new Error('that vehicle was deleted in the app; fuel log not saved');
+      if (!car) throw new Error('kenderaan ini telah dipadam dalam aplikasi; log minyak tidak disimpan');
       if (record.odometer > car.currentOdometer) car.currentOdometer = record.odometer;
       list.unshift(record);
     } else if (a.c === 'vehicles') list.push(record);
     else list.unshift(record);
-    return `✅ Saved ${spec.label}: ${spec.line(record)}${statusOf(record)}`;
+    return `✅ Disimpan (${spec.ms}): ${spec.line(record)}${statusOf(record)}`;
   }
   const idx = list.findIndex((r) => r.id === a.id);
-  if (idx < 0) throw new Error(`${spec.label} no longer exists (deleted in the app?) — nothing changed`);
+  if (idx < 0) throw new Error(`${spec.ms} ini sudah tiada (dipadam dalam aplikasi?) — tiada perubahan`);
   const row = list[idx];
-  if (a.op === 'delete') { list.splice(idx, 1); return `🗑 Deleted ${spec.label}: ${spec.line(row)}`; }
+  if (a.op === 'delete') { list.splice(idx, 1); return `🗑 Dipadam (${spec.ms}): ${spec.line(row)}`; }
   if (a.op === 'update') {
-    for (const [k, old] of Object.entries(a.expect)) if ((row[k] ?? null) !== old) throw new Error(`${k} was changed in the app since I asked (now ${fmt(row[k])}); nothing changed — ask me again`);
+    for (const [k, old] of Object.entries(a.expect)) if ((row[k] ?? null) !== old) throw new Error(`${k} telah diubah dalam aplikasi selepas saya bertanya (kini ${fmt(row[k])}); tiada perubahan — minta semula`);
     Object.assign(row, a.changes);
-    return `✅ Updated ${spec.label}: ${spec.line(row)}`;
+    return `✅ Dikemas kini (${spec.ms}): ${spec.line(row)}`;
   }
   if (a.op === 'pay') {
     const p = a.payment;
     const hist = row[spec.history] || [];
     const pid = p.id || (a.c === 'debts' ? `pay-${Date.now()}` : crypto.randomUUID());
-    if (hist.some((h) => h.id === pid)) return 'Already saved: this payment was recorded before';
+    if (hist.some((h) => h.id === pid)) return 'Sudah disimpan: bayaran ini telah direkodkan sebelum ini';
     if (a.c === 'debts') {
-      if (row.status !== 'active') throw new Error('this debt is already paid off; nothing changed');
+      if (row.status !== 'active') throw new Error('hutang ini sudah selesai dibayar; tiada perubahan');
       const remaining = r2(Math.max(0, row.remainingBalance - p.amount));
       const rec = withProof({ id: pid, debtId: row.id, amount: p.amount, date: p.date, referenceNo: p.referenceNo, notes: p.notes, floating: true }, a.proof);
       row.payments = [rec, ...row.payments];
       row.remainingBalance = remaining;
       row.status = remaining <= 0 ? 'paid_off' : 'active';
       row.tenureMonthsRemaining = Math.max(0, row.tenureMonthsRemaining - 1);
-      return `✅ Payment ${rm(p.amount)} recorded. ${row.title} baki now ${rm(remaining)}${remaining <= 0 ? ' — paid off 🎉' : ''}${statusOf(rec)}`;
+      return `✅ Bayaran ${rm(p.amount)} direkodkan. Baki ${row.title} kini ${rm(remaining)}${remaining <= 0 ? ' — hutang selesai 🎉' : ''}${statusOf(rec)}`;
     }
     const rec = withProof({ id: pid, billId: row.id, amount: p.amount, paidDate: p.date, referenceNo: p.referenceNo, notes: p.notes, method: row.paymentMethod, floating: true }, a.proof);
     row.paymentHistory = [rec, ...row.paymentHistory];
     row.status = 'paid';
-    return `✅ Payment ${rm(p.amount)} recorded for ${row.name}; marked paid${statusOf(rec)}`;
+    return `✅ Bayaran ${rm(p.amount)} direkodkan untuk ${row.name}; status: dibayar${statusOf(rec)}`;
   }
   throw new Error(`unknown action ${a.op}`);
 }
@@ -391,9 +426,9 @@ export function apply(db, a) {
 // Short, plain messages like "beli nasi lemak RM12.50" or "bayar PTPTN RM200 semalam" are planned here without the AI
 // (instant confirm button). Anything unclear returns null and goes to the AI as before; the confirm step is unchanged.
 const AMOUNT = /\brm\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?\b/gi;
-const DAY_WORDS = [[/\b(semalam|yesterday)\b/i, -1], [/\b(kelmarin|kelmarin dulu)\b/i, -2], [/\b(hari ini|harini|today|tadi)\b/i, 0]];
-const PAY = /^(bayar|pay|paid|jelaskan|settle)\b/i;
-const BUY = /^(beli|belanja|buy|bought|spent|spend)\b/i;
+const DAY_WORDS = [[/\b(semalam|smlm|semlm|yesterday)\b/i, -1], [/\b(kelmarin|kemarin|kmrn|lusa lepas)\b/i, -2], [/\b(hari ini|hari ni|harini|hr ni|today|tadi|td|tdi|pagi tadi|ptg tadi|mlm tadi)\b/i, 0]];
+const PAY = /^(bayar|byr|bayaq|dah bayar|dah byr|pay|paid|jelaskan|settle)\b/i;
+const BUY = /^(beli|bli|belanja|blnja|buy|bought|spent|spend)\b/i;
 // Questions, edits and fuel go to the AI: they need more than "description + amount".
 // "minyak" alone is not fuel ("nasi minyak", "minyak masak"); only car-fuel phrases go to the AI for a fuel log.
 const NOT_QUICK = /[?\n]|\d{1,2}\/\d{1,2}|\b(berapa|how|what|why|kenapa|bila|when|list|senarai|show|tunjuk|semak|padam|delete|buang|remove|ubah|edit|update|tukar|change|batal|cancel|undo|hutang baru|bil baru|langganan|subscription|isi minyak|minyak (kereta|motor|motosikal|kenderaan)|petrol|fuel|ron\s?9[57]|ron\s?100|diesel|litre|liter)\b/i;
@@ -425,6 +460,10 @@ export function quickPlan(db, text, now = Date.now(), proof) {
   for (const [re, shift] of DAY_WORDS) if (re.test(rest)) { if (!iso) date = addDays(todayMY(now), shift); rest = rest.replace(re, ' '); }
   rest = rest.replace(/\b(pada|on|untuk|for|di|at)\s*$/i, ' ').replace(/[\s,.;:!-]+/g, ' ').trim();
 
+  // "dah bayar", "sudah beli", "telah settle": the leading "already" word carries no meaning here.
+  rest = rest.replace(/^(sudah|dah|da|telah|baru|just)\s+/i, '');
+  // Any mention of paying that isn't a clear "bayar <debt/bill>" must not turn into a plain expense.
+  if (!PAY.test(rest) && /\b(bayar|byr|bayaq|pay|paid|settle|jelaskan|ansuran)\b/i.test(rest)) return null;
   if (PAY.test(rest)) {
     const name = rest.replace(PAY, '').trim().toLowerCase();
     if (!name) return null;
