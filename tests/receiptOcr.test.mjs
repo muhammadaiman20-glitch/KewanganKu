@@ -29,5 +29,17 @@ test('fast read: key lines replace the full transcription; unreadable images sti
   assert.throws(() => normalizeReceipt({ readable: false, keyLines: ['x'] }), /UNREADABLE/);
   assert.throws(() => normalizeReceipt({ readable: true, keyLines: [] }), /UNREADABLE/);
   const input = buildOcrInput('data:image/jpeg;base64,AAAA');
-  assert.equal(input.max_tokens, 800); assert.match(input.messages[0].content, /Do NOT transcribe the whole receipt/);
+  assert.equal(input.max_tokens, 300); assert.match(input.messages[0].content, /Omit any key you cannot read/);
+});
+test('lean short-key answers map to the full receipt fields and keep the evidence checks', () => {
+  const r = normalizeReceipt({ ok: true, m: 'PETRONAS', a: 50, d: '2026-10-18', c: 'fuel', e: 'JUMLAH RM 50.00', dl: 'Tarikh: 18/10/2026', l: 24.39, p: 2.05, g: 'RON95', s: 'STESEN JALAN KLANG', r: '004512' });
+  assert.deepEqual([r.merchantName, r.amount, r.date, r.category, r.suggestedModule, r.amountEvidence], ['PETRONAS', 50, '2026-10-18', 'fuel', 'fuel', 'JUMLAH RM 50.00']);
+  assert.deepEqual(r.fuelDetails, { fuelType: 'RON95', litres: 24.39, pricePerLitre: 2.05, stationName: 'STESEN JALAN KLANG' });
+  assert.equal(r.rawText, 'PETRONAS\nTarikh: 18/10/2026\nJUMLAH RM 50.00'); assert.deepEqual(r.warnings, []);
+  const debt = normalizeReceipt({ ok: true, m: 'PTPTN', a: '200.00', c: 'debt', e: 'AMAUN RM200.00', r: 'REF9' });
+  assert.deepEqual([debt.amount, debt.debtDetails.referenceNo, debt.date], [200, 'REF9', null]);
+  assert.match(debt.warnings.join(' '), /Tarikh/);
+  // A total that its own evidence does not show is still rejected.
+  assert.equal(normalizeReceipt({ ok: true, m: 'X', a: 99, e: 'JUMLAH RM 50.00' }).amount, null);
+  assert.throws(() => normalizeReceipt({ ok: false }), /UNREADABLE/);
 });
