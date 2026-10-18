@@ -1,4 +1,18 @@
 export const OCR_MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct';
+// Groq is the backup AI (secret GROQ_API_KEY). It hosts the same open models, so answers keep the same shape.
+export const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+export const GROQ_CHAT_MODEL = 'openai/gpt-oss-120b';
+// OpenAI-compatible chat call to Groq. Throws with Groq's own message on failure.
+export async function groqChat(key, body, timeoutMs = 60000) {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Groq ${r.status}: ${j.error?.message || 'request failed'}`);
+  return j;
+}
+// Groq answers OpenAI-style ({choices}); the OCR path reads Workers AI's {response}.
+export const toWorkersShape = (j) => ({ response: j.choices?.[0]?.message?.content ?? null });
 const LIMIT = 8 * 1024 * 1024;
 const json = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const text = (v, max = 500) => typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null;
@@ -187,19 +201,29 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/api/state') return syncState(request, env);
     if (url.pathname === '/api/proofs' || url.pathname.startsWith('/api/proofs/')) return proofs(request, env, url);
-    if (url.pathname === '/api/health') return json({ status: 'ok', hosting: 'cloudflare-pages', cloudSyncConfigured: !!env.DB, receiptOcrConfigured: !!env.AI, model: OCR_MODEL });
+    if (url.pathname === '/api/health') return json({ status: 'ok', hosting: 'cloudflare-pages', cloudSyncConfigured: !!env.DB, receiptOcrConfigured: !!env.AI || !!env.GROQ_API_KEY, groqBackup: !!env.GROQ_API_KEY, model: OCR_MODEL });
     if (url.pathname === '/api/scan-receipt') {
       if (request.method !== 'POST') return json({ error: 'Gunakan POST untuk mengimbas resit.' }, 405);
       if (!await authorized(request, env)) return json({ error: 'Sesi tamat atau tidak dibenarkan. Log masuk semula sebelum mengimbas.' }, 401);
       const origin = request.headers.get('origin'); if (origin && origin !== url.origin) return json({ error: 'Asal permintaan tidak dibenarkan.' }, 403);
       if (!request.headers.get('content-type')?.includes('application/json')) return json({ error: 'Gunakan JSON.' }, 415);
-      if (!env.AI) return json({ error: 'Workers AI belum tersedia. Cuba lagi kemudian.' }, 503);
+      if (!env.AI && !env.GROQ_API_KEY) return json({ error: 'Workers AI belum tersedia. Cuba lagi kemudian.' }, 503);
       try {
         const body = await limitedBody(request); const image = imageData(body.imageBase64);
-        const output = await env.AI.run(OCR_MODEL, buildOcrInput(image));
+        // Workers AI first; Groq (same Llama 4 Scout model) if it fails, e.g. when the free daily allowance runs out.
+        let output, source = 'cloudflare-workers-ai', model = OCR_MODEL;
+        try {
+          if (!env.AI) throw new Error('no Workers AI binding');
+          output = await env.AI.run(OCR_MODEL, buildOcrInput(image));
+        } catch (first) {
+          if (!env.GROQ_API_KEY) throw first;
+          console.warn(JSON.stringify({ event: 'ocr_fallback_groq', reason: String(first?.message || first).slice(0, 120) }));
+          model = env.GROQ_VISION_MODEL || GROQ_VISION_MODEL; source = 'groq';
+          output = toWorkersShape(await groqChat(env.GROQ_API_KEY, { model, ...buildOcrInput(image) }));
+        }
         let value; try { value = typeof output.response === 'string' ? JSON.parse(output.response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) : output.response; } catch { throw new Error('INVALID_RESULT'); }
         const data = normalizeReceipt(value);
-        return json({ source: 'cloudflare-workers-ai', model: OCR_MODEL, data, warning: ['Sila semak maklumat dengan resit asal sebelum menyimpan.', ...data.warnings].join(' ') });
+        return json({ source, model, data, warning: ['Sila semak maklumat dengan resit asal sebelum menyimpan.', ...data.warnings].join(' ') });
       } catch (error) {
         const code = error instanceof Error ? error.message : '';
         if (code === 'TOO_LARGE') return json({ error: 'Gambar terlalu besar. Muat naik gambar resit yang lebih kecil.' }, 413);

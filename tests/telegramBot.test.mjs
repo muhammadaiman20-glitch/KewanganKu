@@ -346,3 +346,27 @@ test('when the daily AI allowance runs out, the owner gets a clear Malay message
     assert.match(card.text, /Rekod bayaran RM200\.00/); assert.equal(card.reply_markup.inline_keyboard[0][0].text, '✅ Sahkan');
   } finally { globalThis.fetch = orig; }
 });
+
+test('Groq takes over when Workers AI fails, with the same model, tools and reasoning effort', async () => {
+  const { env } = setup(), ui = []; const calls = []; const orig = globalThis.fetch;
+  env.GROQ_API_KEY = 'test-key';
+  env.AI = { run: async () => { throw new Error('AiError: you have used up your daily free allocation of 10,000 neurons'); } };
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body); calls.push([String(url), init.headers.Authorization, body]);
+    return Response.json({ choices: [{ message: { content: null, tool_calls: [{ id: 'g1', type: 'function', function: { name: 'finance_add', arguments: '{"collection":"expenses","record":{"description":"Roti","amount":4}}' } }] } }] });
+  };
+  try {
+    assert.equal(await think(env, [], 'beli roti dan susu', ui), '');
+    assert.equal(ui.length, 1); assert.match(ui[0].text, /Tambah perbelanjaan[\s\S]*Roti/);
+    const [url, auth, body] = calls[0];
+    assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions'); assert.equal(auth, 'Bearer test-key');
+    assert.equal(body.model, 'openai/gpt-oss-120b'); assert.ok(body.tools.length > 10); assert.equal(body.reasoning_effort, 'low');
+  } finally { globalThis.fetch = orig; }
+});
+
+test('without a Groq key the old behaviour stays: the next Workers AI model is tried', async () => {
+  const { env } = setup(), ui = []; const models = [];
+  env.AI = { run: async (m) => { models.push(m); if (models.length === 1) throw new Error('busy'); return { choices: [{ message: { content: 'OK' } }] }; } };
+  assert.equal(await think(env, [], 'hai', ui), 'OK');
+  assert.deepEqual(models, ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
+});
