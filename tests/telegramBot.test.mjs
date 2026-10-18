@@ -259,3 +259,32 @@ test('the app sync rejects a malformed proof flag', () => {
   const data = appData(); data.expenses[0].floating = 'yes';
   assert.throws(() => validateDatabase(data), /INVALID_DATA/);
 });
+
+test('your real messages: nasi minyak is food, and "18 oktober" sets the date', () => {
+  const db = appData(), now = Date.parse('2026-10-19T04:00:00Z');
+  const a = quickPlan(db, 'Belanja makan RM 3.50 beli nasi minyak', now);
+  assert.deepEqual([a.action.record.description, a.action.record.amount, a.action.record.date], ['Makan beli nasi minyak', 3.5, '2026-10-19']);
+  const b = quickPlan(db, 'Beli nasi lemak pada 18 oktober RM 12.80', now);
+  assert.deepEqual([b.action.record.description, b.action.record.amount, b.action.record.date], ['Nasi lemak', 12.8, '2026-10-18']);
+  assert.equal(quickPlan(db, 'kopi 5 jan RM4', now).action.record.date, '2026-01-05');
+  assert.equal(quickPlan(db, 'kopi 25 disember RM4', now).action.record.date, '2025-12-25'); // not in the future
+  assert.equal(quickPlan(db, 'kopi 31 feb RM4', now), null);
+  for (const t of ['isi minyak RM50', 'minyak kereta RM60', 'petrol RM40']) assert.equal(quickPlan(db, t, now), null, t);
+  assert.ok(quickPlan(db, 'minyak masak RM8.90', now).action);
+});
+
+test('a reply that only pretends to show a confirm button is sent back so the real tool is called', async () => {
+  const { env } = setup(), ui = []; let call = 0;
+  env.AI = { run: async () => {
+    call++;
+    if (call === 1) return { choices: [{ message: { content: '➕ Add expense\n2026-10-19 · RM3.50 · Nasi minyak\n(Butiran akan disimpan selepas anda menekan butang **Sahkan**.)' } }] };
+    return { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'finance_add', arguments: '{"collection":"expenses","record":{"description":"Nasi minyak","amount":3.5}}' } }] } }] };
+  } };
+  assert.equal(await think(env, [], 'nasi minyak RM3.50 dan teh', ui), '');
+  assert.equal(call, 2); assert.equal(ui.length, 1);
+  assert.deepEqual(ui[0].reply_markup.inline_keyboard[0].map((b) => b.text), ['✅ Sahkan', '✖️ Batal']);
+  // An honest answer that merely mentions "terapung" is left alone.
+  const ui2 = []; call = 0;
+  env.AI = { run: async () => { call++; return { choices: [{ message: { content: 'RM 12.50 masih terapung (1 transaksi).' } }] }; } };
+  assert.equal(await think(env, [], 'berapa terapung?', ui2), 'RM 12.50 masih terapung (1 transaksi).'); assert.equal(call, 1);
+});

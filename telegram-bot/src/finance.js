@@ -395,7 +395,10 @@ const DAY_WORDS = [[/\b(semalam|yesterday)\b/i, -1], [/\b(kelmarin|kelmarin dulu
 const PAY = /^(bayar|pay|paid|jelaskan|settle)\b/i;
 const BUY = /^(beli|belanja|buy|bought|spent|spend)\b/i;
 // Questions, edits and fuel go to the AI: they need more than "description + amount".
-const NOT_QUICK = /[?\n]|\d{1,2}\/\d{1,2}|\b(berapa|how|what|why|kenapa|bila|when|list|senarai|show|tunjuk|semak|padam|delete|buang|remove|ubah|edit|update|tukar|change|batal|cancel|undo|hutang baru|bil baru|langganan|subscription|minyak|petrol|fuel|ron\s?9[57]|diesel|litre|liter)\b/i;
+// "minyak" alone is not fuel ("nasi minyak", "minyak masak"); only car-fuel phrases go to the AI for a fuel log.
+const NOT_QUICK = /[?\n]|\d{1,2}\/\d{1,2}|\b(berapa|how|what|why|kenapa|bila|when|list|senarai|show|tunjuk|semak|padam|delete|buang|remove|ubah|edit|update|tukar|change|batal|cancel|undo|hutang baru|bil baru|langganan|subscription|isi minyak|minyak (kereta|motor|motosikal|kenderaan)|petrol|fuel|ron\s?9[57]|ron\s?100|diesel|litre|liter)\b/i;
+const MONTHS = [/^jan/i, /^feb/i, /^(mac|mar)/i, /^apr/i, /^(mei|may)/i, /^jun/i, /^jul/i, /^(ogo|aug)/i, /^sep/i, /^(okt|oct)/i, /^nov/i, /^(dis|dec)/i];
+const DAY_MONTH = /\b(\d{1,2})\s+(jan(?:uari|uary)?|feb(?:ruari|ruary)?|mac|mar(?:ch)?|apr(?:il)?|mei|may|jun[e]?|jul(?:ai|y)?|ogos|aug(?:ust)?|sept?(?:ember)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dis(?:ember)?|dec(?:ember)?)\b\.?(?:\s+(\d{4}))?/i;
 
 export function quickPlan(db, text, now = Date.now(), proof) {
   const t = String(text || '').trim();
@@ -409,6 +412,16 @@ export function quickPlan(db, text, now = Date.now(), proof) {
   let date = todayMY(now);
   const iso = rest.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (iso) { date = coerce('date', F('date'), iso[1]); rest = rest.replace(iso[0], ' '); }
+  // "18 oktober", "5 Jan 2026": this year unless that would be in the future, then last year.
+  const named = !iso && rest.match(DAY_MONTH);
+  if (named) {
+    const today = todayMY(now), month = MONTHS.findIndex((re) => re.test(named[2])) + 1;
+    let year = named[3] ? Number(named[3]) : Number(today.slice(0, 4));
+    let d = receiptDate(`${year}-${String(month).padStart(2, '0')}-${String(Number(named[1])).padStart(2, '0')}`);
+    if (d && !named[3] && d > today) d = receiptDate(`${year - 1}${d.slice(4)}`);
+    if (!d || d > today) return null; // impossible or future date: let the AI ask
+    date = d; rest = rest.replace(named[0], ' ');
+  }
   for (const [re, shift] of DAY_WORDS) if (re.test(rest)) { if (!iso) date = addDays(todayMY(now), shift); rest = rest.replace(re, ' '); }
   rest = rest.replace(/\b(pada|on|untuk|for|di|at)\s*$/i, ' ').replace(/[\s,.;:!-]+/g, ' ').trim();
 
