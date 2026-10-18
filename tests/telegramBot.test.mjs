@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import worker, { runTool, resolvePending, think, handleUpdate, toHtml, chunks } from '../telegram-bot/src/worker.js';
-import { buildRecord, summary, todayMY } from '../telegram-bot/src/finance.js';
+import worker, { runTool, resolvePending, think, handleUpdate, toHtml, chunks, quickRecord } from '../telegram-bot/src/worker.js';
+import { buildRecord, summary, todayMY, quickPlan } from '../telegram-bot/src/finance.js';
 
 // Minimal D1 on node:sqlite (prepare/bind/first/all/run/batch).
 function d1(sqlite) {
@@ -125,9 +125,43 @@ test('tech issue CRUD with confirmed delete', async () => {
 test('agent loop runs a tool call then answers in words', async () => {
   const { env } = setup(), ui = []; let call = 0;
   env.AI = { run: async (_m, input) => (call++ === 0
-    ? { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'finance_add', arguments: '{"collection":"expenses","record":{"description":"roti","amount":4}}' } }] } }] }
-    : { choices: [{ message: { content: `tap confirm (${JSON.parse(input.messages.at(-1).content).pending ? 'queued' : 'no'})` } }] }) };
-  assert.equal(await think(env, [], 'beli roti RM4', ui), 'tap confirm (queued)'); assert.equal(ui.length, 1);
+    ? { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'finance_summary', arguments: '{}' } }] } }] }
+    : { choices: [{ message: { content: `spent ${JSON.parse(input.messages.at(-1).content).expensesThisMonth.total}` } }] }) };
+  assert.equal(await think(env, [], 'how much this month?', ui), 'spent 5'); assert.equal(call, 2);
+});
+
+test('a round that only queues confirm buttons ends without another model call', async () => {
+  const { env } = setup(), ui = []; let call = 0, input0;
+  env.AI = { run: async (_m, input) => { input0 ??= input; call++; return { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'finance_add', arguments: '{"collection":"expenses","record":{"description":"roti","amount":4}}' } }] } }] }; } };
+  assert.equal(await think(env, [], 'beli roti dan simpan', ui), ''); assert.equal(call, 1); assert.equal(ui.length, 1);
+  assert.equal(input0.reasoning_effort, 'low');
+});
+
+test('quick recorder plans plain expenses and payments without the AI, and leaves the rest to it', () => {
+  const db = appData(), now = Date.parse('2026-10-19T04:00:00Z');
+  const e = quickPlan(db, 'beli nasi lemak RM12.50', now);
+  assert.deepEqual([e.action.c, e.action.record.description, e.action.record.amount, e.action.record.date], ['expenses', 'Nasi lemak', 12.5, '2026-10-19']);
+  assert.equal(quickPlan(db, 'Grab RM1,250.00 semalam', now).action.record.date, '2026-10-18');
+  assert.equal(quickPlan(db, 'rm8 teh tarik', now).action.record.description, 'Teh tarik');
+  const p = quickPlan(db, 'bayar PTPTN RM200 semalam', now);
+  assert.deepEqual([p.action.op, p.action.c, p.action.id, p.action.payment.amount, p.action.payment.date], ['pay', 'debts', 'debt-1', 200, '2026-10-18']);
+  assert.equal(quickPlan(db, 'bayar tnb rm120', now).action.c, 'bills');
+  for (const t of ['berapa belanja bulan ni?', 'isi minyak RM50', 'beli roti', 'kopi RM5 dan teh RM3', 'bayar parking RM3', 'padam kopi RM5', 'beli roti RM4 12/10', 'MT5 cannot connect'])
+    assert.equal(quickPlan(db, t, now), null, t);
+});
+
+test('quick record sends a confirm card straight away and saves only on tap', async () => {
+  const { env, doc } = setup(); const sent = []; const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([String(url).split('/').pop(), JSON.parse(init.body)]); return Response.json({ ok: true }); };
+  try {
+    env.AI = { run: async () => { throw new Error('AI must not be called'); } };
+    await handleUpdate(env, { update_id: 9, message: { from: { id: 42 }, chat: { id: 42, type: 'private' }, text: 'beli nasi lemak RM12.50' } });
+    const card = sent.find(([m, b]) => m === 'sendMessage' && b.reply_markup)[1];
+    assert.match(card.text, /Nasi lemak/); assert.equal(doc().expenses.length, 1);
+    assert.match(await resolvePending(env, 'ok', card.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]), /Saved expense/);
+    assert.equal(doc().expenses[0].description, 'Nasi lemak');
+    assert.equal(await quickRecord(env, 42, 'MT5 cannot connect'), false);
+  } finally { globalThis.fetch = orig; }
 });
 
 test('webhook: wrong secret is 403, stranger only gets their id, duplicates are dropped', async () => {

@@ -9,7 +9,7 @@ import * as fin from './finance.js';
 const CHAT_MODEL = '@cf/openai/gpt-oss-120b';
 const FALLBACK_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const VISION_MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct';
-const HISTORY_TURNS = 12;
+const HISTORY_TURNS = 8;
 const MAX_TOOL_ROUNDS = 6;
 const ISSUE_STATUS = ['open', 'in_progress', 'resolved'];
 const PRIORITY = ['low', 'medium', 'high'];
@@ -203,7 +203,9 @@ export function toMessage(r) {
 
 async function runModel(env, messages, tools = true) {
   const input = { messages, max_tokens: 2000, temperature: 0.3, ...(tools ? { tools: TOOLS } : {}) };
-  try { return toMessage(await env.AI.run(env.AI_MODEL || CHAT_MODEL, input)); }
+  const model = env.AI_MODEL || CHAT_MODEL;
+  // gpt-oss thinks before answering; "low" roughly halves the wait and is plenty for records and most fixes.
+  try { return toMessage(await env.AI.run(model, model.startsWith('@cf/openai/') ? { ...input, reasoning_effort: 'low' } : input)); }
   catch (e) {
     console.warn('main model failed, using fallback', String(e?.message || e));
     return toMessage(await env.AI.run(FALLBACK_MODEL, input));
@@ -218,14 +220,19 @@ export async function think(env, history, userText, ui) {
     const msg = await runModel(env, messages);
     if (!msg.tool_calls?.length) return (msg.content || '').trim() || 'I had nothing to say there — try rephrasing?';
     messages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls });
+    let queued = 0;
     for (const call of msg.tool_calls) {
       let args = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* bad JSON from model */ }
       let result;
       try { result = await runTool(env, call.function.name, args, ui); }
       catch (e) { result = { error: String(e?.message || e).slice(0, 300) }; }
+      if (result?.pending) queued++;
       messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(result).slice(0, 8000) });
     }
+    // Every call this round queued a confirm button: the button already shows what will change, so skip
+    // another model round just to say "tap Confirm". The caller sends the buttons.
+    if (queued && queued === msg.tool_calls.length) return '';
   }
   const last = await runModel(env, messages, false);
   return (last.content || '').trim() || 'Done.';
@@ -471,7 +478,7 @@ async function onMessage(env, msg) {
     if (reply?.html) return tg(env, 'sendMessage', { chat_id: chatId, text: reply.html, parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...reply.extra });
     if (reply !== null) return send(env, chatId, reply);
   }
-  await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+  tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {}); // don't wait for it
   const photo = msg.photo?.at(-1)?.file_id || (msg.document?.mime_type?.startsWith('image/') ? msg.document.file_id : null);
   if (photo) {
     const seen = await describeImage(env, photo, msg.caption);
@@ -481,13 +488,26 @@ async function onMessage(env, msg) {
   }
   if (!text.trim()) return send(env, chatId, 'Send me text or a screenshot of the problem.');
   const ui = [];
+  if (!photo && !msg.document && await quickRecord(env, chatId, text)) return;
   const typing = setInterval(() => tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' }), 4500);
   let answer;
   try { answer = await think(env, await loadHistory(env, chatId), text, ui); }
   finally { clearInterval(typing); }
-  await send(env, chatId, answer);
+  if (answer) await send(env, chatId, answer);
   for (const p of ui) await tg(env, 'sendMessage', { chat_id: chatId, parse_mode: 'HTML', ...p });
-  await remember(env, chatId, text, answer);
+  await remember(env, chatId, text, answer || ui.map((p) => p.text.replace(/<[^>]+>/g, '')).join('\n\n') || 'Done.');
+}
+
+// Fast path: "beli nasi lemak RM12.50" / "bayar PTPTN RM200 semalam" get a confirm button in about a second, no AI.
+// Returns false (and the AI handles it) for anything fin.quickPlan isn't sure about.
+export async function quickRecord(env, chatId, text) {
+  let plan;
+  try { plan = fin.quickPlan((await fin.readState(env)).data, text); } catch { return false; }
+  if (!plan?.action) return false;
+  const card = await askConfirm(env, { op: 'finance', action: plan.action }, plan.preview, 'Confirm');
+  await tg(env, 'sendMessage', { chat_id: chatId, parse_mode: 'HTML', ...card });
+  await remember(env, chatId, text, plan.preview + '\n(confirm button sent)');
+  return true;
 }
 
 export async function handleUpdate(env, update) {

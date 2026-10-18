@@ -332,3 +332,46 @@ export function apply(db, a) {
   }
   throw new Error(`unknown action ${a.op}`);
 }
+
+// ---------- quick recorder ----------
+// Short, plain messages like "beli nasi lemak RM12.50" or "bayar PTPTN RM200 semalam" are planned here without the AI
+// (instant confirm button). Anything unclear returns null and goes to the AI as before; the confirm step is unchanged.
+const AMOUNT = /\brm\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?\b/gi;
+const DAY_WORDS = [[/\b(semalam|yesterday)\b/i, -1], [/\b(kelmarin|kelmarin dulu)\b/i, -2], [/\b(hari ini|harini|today|tadi)\b/i, 0]];
+const PAY = /^(bayar|pay|paid|jelaskan|settle)\b/i;
+const BUY = /^(beli|belanja|buy|bought|spent|spend)\b/i;
+// Questions, edits and fuel go to the AI: they need more than "description + amount".
+const NOT_QUICK = /[?\n]|\d{1,2}\/\d{1,2}|\b(berapa|how|what|why|kenapa|bila|when|list|senarai|show|tunjuk|semak|padam|delete|buang|remove|ubah|edit|update|tukar|change|batal|cancel|undo|hutang baru|bil baru|langganan|subscription|minyak|petrol|fuel|ron\s?9[57]|diesel|litre|liter)\b/i;
+
+export function quickPlan(db, text, now = Date.now()) {
+  const t = String(text || '').trim();
+  if (!t || t.length > 100 || t.startsWith('/') || NOT_QUICK.test(t)) return null;
+  const amounts = [...t.matchAll(AMOUNT)];
+  if (amounts.length !== 1) return null;
+  const amount = Number(amounts[0][1].replace(/,/g, '') + (amounts[0][2] ? '.' + amounts[0][2] : ''));
+  if (!(amount > 0) || amount > 100000) return null;
+
+  let rest = t.replace(amounts[0][0], ' ');
+  let date = todayMY(now);
+  const iso = rest.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (iso) { date = coerce('date', F('date'), iso[1]); rest = rest.replace(iso[0], ' '); }
+  for (const [re, shift] of DAY_WORDS) if (re.test(rest)) { if (!iso) date = addDays(todayMY(now), shift); rest = rest.replace(re, ' '); }
+  rest = rest.replace(/\b(pada|on|untuk|for|di|at)\s*$/i, ' ').replace(/[\s,.;:!-]+/g, ' ').trim();
+
+  if (PAY.test(rest)) {
+    const name = rest.replace(PAY, '').trim().toLowerCase();
+    if (!name) return null;
+    const words = name.split(' ');
+    const hits = [
+      ...(db.debts || []).filter((d) => d.status === 'active').map((d) => ({ c: 'debts', id: d.id, key: `${d.title} ${d.creditor}` })),
+      ...(db.bills || []).map((b) => ({ c: 'bills', id: b.id, key: `${b.name} ${b.provider}` })),
+    ].filter((h) => words.every((w) => h.key.toLowerCase().includes(w)));
+    // No unique debt/bill (e.g. "bayar parking RM3"): let the AI decide between a payment and an expense.
+    if (hits.length !== 1) return null;
+    return planPayment(db, { collection: hits[0].c, id: hits[0].id, amount, date });
+  }
+
+  const description = rest.replace(BUY, '').trim();
+  if (!description || description.length > 60 || description.split(' ').length > 8 || !/\p{L}/u.test(description)) return null;
+  return planAdd(db, { collection: 'expenses', record: { description: description[0].toUpperCase() + description.slice(1), amount, date } });
+}
