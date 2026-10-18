@@ -4,6 +4,7 @@ import { AppDatabase } from '../types';
 import { formatRM } from '../services/storage';
 import { localDate } from '../services/voiceCommand';
 import { ProofRef, Transaction, proofSplit, refKey, transactions, uploadProof } from '../services/proof';
+import { DocumentCropper } from './DocumentCropper';
 
 // Realised vs floating money this month, and every transaction still waiting for its receipt.
 export function ProofPanel({ data, onAttach }: { data: AppDatabase; onAttach: (ref: ProofRef, url: string) => void }) {
@@ -16,11 +17,18 @@ export function ProofPanel({ data, onAttach }: { data: AppDatabase; onAttach: (r
   const target = useRef<Transaction | null>(null);
 
   const pick = (t: Transaction) => { target.current = t; setError(''); input.current?.click(); };
-  const upload = async (file: File | undefined) => {
-    const t = target.current; if (!file || !t) return;
+  // The chosen photo opens in document mode first (crop, straighten, clean); the scan is what gets uploaded.
+  const [cropSource, setCropSource] = useState<string | null>(null);
+  const choose = (file: File | undefined) => {
+    if (!file || !target.current) return;
     if (!file.type.startsWith('image/') || file.size > 20 * 1024 * 1024) { setError('Pilih gambar resit (JPEG, PNG atau WebP) sehingga 20 MB.'); return; }
+    setCropSource(URL.createObjectURL(file));
+  };
+  const closeCrop = () => { if (cropSource) URL.revokeObjectURL(cropSource); setCropSource(null); };
+  const upload = async (scan: string) => {
+    const t = target.current; if (!t) return;
     setBusy(refKey(t.ref));
-    try { onAttach(t.ref, await uploadProof(file)); }
+    try { onAttach(t.ref, await uploadProof(scan)); }
     catch (e) { setError(e instanceof Error ? e.message : 'Bukti tidak dapat dimuat naik.'); }
     finally { setBusy(null); target.current = null; }
   };
@@ -67,6 +75,9 @@ export function ProofPanel({ data, onAttach }: { data: AppDatabase; onAttach: (r
     </button>}
     {/* No capture attribute: a bank-transfer slip is usually a screenshot in the gallery, not a camera shot. */}
     <input ref={input} type="file" accept="image/*" className="hidden" aria-label="Gambar resit"
-      onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void upload(file); }} />
+      onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; choose(file); }} />
+    {cropSource && <DocumentCropper source={cropSource}
+      onCancel={() => { closeCrop(); target.current = null; }}
+      onDone={scan => { closeCrop(); void upload(scan); }} />}
   </section>;
 }

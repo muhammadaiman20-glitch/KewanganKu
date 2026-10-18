@@ -65,3 +65,37 @@
 @media (min-width: 700px) { .receipt-camera-shell { padding-inline: 20px; } .receipt-sheet { inset: 0; max-height: 86dvh; margin: auto; border-radius: 20px; } }
 @media (max-height: 600px) { .receipt-camera-top { padding-block: 6px; } .receipt-camera-deck { padding-block: 6px; } .receipt-shutter { width: 60px; height: 60px; } .receipt-mode { padding-top: 8px; } .receipt-mode p, .receipt-camera-footnote { display: none; } .receipt-camera-empty { padding: 30px 16px; } .receipt-camera-empty h3 { font-size: 16px; } .receipt-camera-empty p { display: none; } .receipt-empty-icon { margin-bottom: 10px; } }
 @media (prefers-reduced-motion: reduce) { .receipt-spinner { animation: none; } .receipt-shutter>span { transition: none; } }
+
+/* Document mode: crop / straighten / clean a receipt photo */
+.doc-scan { position: fixed; inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0 0 env(safe-area-inset-bottom, 0px); border: 0; background: #070a10; color: #f1f5f9; display: flex; flex-direction: column; overflow: hidden; }
+.doc-scan:not([open]) { display: none; }
+.doc-scan::backdrop { background: #070a10; }
+.doc-scan-heading { flex-shrink: 0; width: 100%; max-width: 560px; margin: 0 auto; background: #070a10; border-bottom: 0; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+.doc-scan-title { flex: 1; min-width: 0; text-align: center; }
+.doc-scan-title h2 { font-size: 16px; font-weight: 700; }
+.doc-scan-title p { color: #a4b5c8; font-size: 11px; margin-top: 3px; }
+.doc-scan-stage { position: relative; flex: 1; min-height: 0; width: calc(100% - 24px); max-width: 536px; margin: 0 auto; overflow: hidden; border-radius: 16px; background: #0d1522; touch-action: none; user-select: none; }
+.doc-scan-stage > img { position: absolute; pointer-events: none; }
+.doc-scan-result { display: flex; align-items: center; justify-content: center; padding: 12px; background: repeating-conic-gradient(#0f1826 0% 25%, #0b1320 0% 50%) 50% / 24px 24px; }
+.doc-scan-result > img { position: static; display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 40px #000a; background: white; }
+.doc-scan-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.doc-scan-shade { fill: #050a12b3; }
+.doc-scan-edge { fill: #6ee7b714; stroke: #6ee7b7; stroke-width: 2; stroke-linejoin: round; }
+.doc-scan-handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; display: grid; place-items: center; cursor: grab; touch-action: none; background: transparent; }
+.doc-scan-handle::after { content: ''; width: 22px; height: 22px; border-radius: 50%; background: #6ee7b7; border: 3px solid #04130e; box-shadow: 0 0 0 2px #6ee7b7aa, 0 4px 12px #0008; transition: transform 120ms ease-out; }
+.doc-scan-handle.is-active::after { transform: scale(1.25); }
+.doc-scan-handle:focus-visible { outline: 2px solid #a7f3d0; outline-offset: 2px; }
+.doc-scan-loupe { position: absolute; top: 12px; left: 12px; width: 96px; height: 96px; border-radius: 50%; border: 3px solid #6ee7b7; background-repeat: no-repeat; background-color: #0d1522; box-shadow: 0 8px 24px #000a; pointer-events: none; }
+.doc-scan-loupe i { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid #6ee7b7; }
+.doc-scan-busy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #070e1bcc; color: #a7f3d0; font-size: 14px; font-weight: 600; }
+.doc-scan-filters { flex-shrink: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: calc(100% - 24px); max-width: 536px; margin: 12px auto 0; }
+.doc-scan-filter { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 10px; border-radius: 12px; background: #1a2433; color: #e2e8f0; font-size: 13px; font-weight: 650; text-align: left; cursor: pointer; border: 1px solid transparent; }
+.doc-scan-filter small { display: block; font-size: 10px; font-weight: 400; color: #a4b5c8; line-height: 1.3; }
+.doc-scan-filter svg { flex-shrink: 0; color: #6ee7b7; }
+.doc-scan-filter.is-active { border-color: #6ee7b7; background: #132d29; }
+.doc-scan-tools { flex-shrink: 0; display: flex; gap: 8px; width: calc(100% - 24px); max-width: 536px; margin: 12px auto 16px; }
+.doc-scan-tool { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 72px; min-height: 56px; padding: 6px 10px; border-radius: 12px; background: #1a2433; color: #e2e8f0; font-size: 11px; font-weight: 600; cursor: pointer; }
+.doc-scan-next { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; border-radius: 12px; background: #6ee7b7; color: #06241a; font-size: 14px; font-weight: 750; cursor: pointer; }
+.doc-scan button:disabled { opacity: .45; cursor: not-allowed; }
+.doc-scan-error { flex-shrink: 0; text-align: center; color: #fda4af; font-size: 12px; padding: 0 16px 12px; }
+@media (max-width: 380px) { .doc-scan-filter small { display: none; } }

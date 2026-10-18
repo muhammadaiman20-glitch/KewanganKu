@@ -5,6 +5,7 @@ import { DebtItem, ExpenseItem, FuelLogItem, TabType, VehicleItem } from '../typ
 import { SAMPLE_RECEIPTS } from '../services/sampleReceipts';
 import { localDate } from '../services/voiceCommand';
 import { uploadProof } from '../services/proof';
+import { DocumentCropper } from './DocumentCropper';
 
 type Extraction = {
   merchantName: string | null; amount: number | null; date: string | null;
@@ -101,7 +102,10 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
     } catch (e) { if (alive.current && sequence.current === id) setNotice(e instanceof Error && e.name === 'AbortError' ? 'Imbasan mengambil masa terlalu lama. Cuba lagi.' : e instanceof Error ? e.message : 'Imbasan gagal. Cuba lagi.'); }
     finally { clearTimeout(timeout); if (alive.current && sequence.current === id) { setBusy(false); pending.current = null; } }
   };
-  const capture = () => { const v = video.current; if (!v?.videoWidth) { setNotice('Tunggu sehingga kamera bersedia.'); return; } const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d')?.drawImage(v, 0, 0); void scan(c.toDataURL('image/jpeg', 0.94)); };
+  // Every photo goes through document mode (crop, straighten, clean) before OCR; the cleaned scan is also the proof.
+  const [crop, setCrop] = useState<{ source: string; from: 'camera' | 'gallery' } | null>(null);
+  const endCrop = () => { if (crop?.from === 'gallery') URL.revokeObjectURL(crop.source); setCrop(null); };
+  const capture = () => { const v = video.current; if (!v?.videoWidth) { setNotice('Tunggu sehingga kamera bersedia.'); return; } const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d')?.drawImage(v, 0, 0); stopCamera(); setCrop({ source: c.toDataURL('image/jpeg', 0.94), from: 'camera' }); };
   const reset = () => { sequence.current++; pending.current?.abort(); stopCamera(); setBusy(false); setImage(null); setResult(null); setNotice(''); setSaved(false); setReviewed(false); };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (saving.current || saved || !reviewed) return;
@@ -162,9 +166,12 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
       <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="Fail resit" onChange={async event => {
         const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) { setNotice('Pilih gambar JPEG, PNG atau WebP sehingga 20 MB.'); return; }
-        const url = URL.createObjectURL(file); try { await scan(url); } finally { URL.revokeObjectURL(url); }
+        stopCamera(); setCrop({ source: URL.createObjectURL(file), from: 'gallery' });
       }} />
     </div>
+    {crop && <DocumentCropper source={crop.source}
+      onCancel={() => { const from = crop.from; endCrop(); if (from === 'camera') void startCamera(); }}
+      onDone={scanned => { endCrop(); void scan(scanned); }} />}
     <dialog ref={reviewDialog} className="receipt-sheet" aria-label="Semakan hasil OCR" onCancel={event => { event.preventDefault(); event.stopPropagation(); closeReview(); }}>
       <div className="receipt-sheet-heading"><div><h2>{saved ? 'Resit disimpan' : 'Semak bacaan resit'}</h2><p>Workers AI · Semakan sebelum simpan</p></div><button type="button" className="receipt-icon-button" onClick={closeReview} aria-label="Kembali ke kamera"><X size={22} /></button></div>
       <div className="receipt-sheet-content" aria-busy={busy}>
@@ -203,7 +210,7 @@ export function OcrScannerScreen({ initialModule = 'auto', vehicles, debts, onSa
       <div className="receipt-sheet-content"><button type="button" className="receipt-option-button" disabled={busy} onClick={retake}><RefreshCw size={20} /><span>Ambil resit baharu<small>Buka kamera dan mula semula</small></span></button>
         <h3 className="receipt-sample-title">Cuba resit contoh</h3><p className="text-sm text-slate-300 mb-3">Data demonstrasi. Jangan simpan sebagai transaksi sebenar.</p>
         {SAMPLE_RECEIPTS.map(sample => <button type="button" key={sample.id} disabled={busy} className="receipt-option-button" onClick={() => void scan(sample.renderToDataUrl())}><FileCheck2 size={20} /><span>{sample.thumbnailTitle}<small>{sample.badge}</small></span></button>)}
-        <p className="receipt-privacy">Gambar dihantar kepada Cloudflare untuk OCR. Aplikasi tidak menyimpan gambar pada pelayan.</p>
+        <p className="receipt-privacy">Gambar dihantar kepada Cloudflare untuk OCR. Imbasan dokumen yang anda simpan disimpan sebagai bukti bayaran dalam akaun awan anda sahaja.</p>
       </div>
     </dialog>
   </dialog>;
