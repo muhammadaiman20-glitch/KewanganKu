@@ -17,12 +17,16 @@ import {
   Fuel,
   CreditCard,
   Repeat,
+  Send,
+  Bot,
 } from 'lucide-react';
 import type { SyncStatus } from '../services/cloudSync';
 import { RECOVERY_KEY } from '../services/cloudSync';
 import { AppDatabase, UserProfile } from '../types';
 import { exportBackupJson, parseAndValidateBackup } from '../services/storage';
 import { exportAllToCsv, exportFuelLogsOnlyToCsv, exportDebtsOnlyToCsv } from '../services/csvExport';
+
+const TELEGRAM_BOT = 'techdesk_ai_aiman_bot';
 
 interface SettingsScreenProps {
   profile: UserProfile;
@@ -281,6 +285,48 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               </span>
             </div>
           </button>
+        </div>
+      </div>
+
+      {/* Telegram bot (telegram-bot/ Worker). It shares the D1 records above; the website holds no bot token. */}
+      <div className="rounded-3xl bg-slate-900/80 border border-slate-800 p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <Bot className="w-5 h-5 text-sky-400" />
+            <h3 className="text-sm font-bold text-white">Bot Telegram</h3>
+          </div>
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/30">
+            @{TELEGRAM_BOT}
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-300 leading-relaxed">
+          Rekod perbelanjaan, bayar hutang atau bil, semak ringkasan bulanan (/summary) dan dapatkan bantuan teknikal terus dari Telegram. Rekod daripada bot masuk ke data awan yang sama dan muncul di sini pada penyelarasan seterusnya. Setiap perubahan wang perlu disahkan dengan butang Sahkan dalam Telegram.
+        </p>
+
+        <div className="p-4 rounded-2xl bg-[#0b1220] border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center shrink-0">
+              <Send className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white">Aktifkan bot</h4>
+              <p className="text-[11px] text-slate-400">
+                Telegram akan dibuka pada sembang bot. Tekan <span className="font-semibold text-slate-200">Start</span> untuk menghantar /start.
+              </p>
+            </div>
+          </div>
+
+          <a
+            href={`https://t.me/${TELEGRAM_BOT}?start=kewanganku`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="min-h-11 px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-2 self-start sm:self-center"
+          >
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Mula di Telegram</span>
+            <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+          </a>
         </div>
       </div>
 
